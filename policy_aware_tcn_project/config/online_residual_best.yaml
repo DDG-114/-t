@@ -32,8 +32,8 @@ metrics:
   price_range: 1000.0
   daily_accuracy_threshold: 0.85
 online_residual_calibrator:
-  min_history_days: 7
-  window_days: 7
+  min_history_days: 10
+  window_days: 5
   group: pred_bin
   shrink: 0.5
   clip_value: 160.0

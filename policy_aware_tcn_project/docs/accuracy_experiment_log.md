@@ -19,15 +19,22 @@ The fixed test period is 2025-12-01 through 2025-12-31 unless noted otherwise.
     --prefix online_residual_best
   ```
 - Output: `outputs/online_residual_best/reports/online_residual_best_summary.json`
-- Test accuracy: `0.7819392493578683`
-- MAE: `80.48272015121162`
-- RMSE: `165.53786971517897`
+- Test accuracy: `0.7857284442214671`
+- MAE: `80.43487190860117`
+- RMSE: `166.8320110819527`
 - Pass days at 85% daily accuracy: `9 / 31`
 
 The online residual calibrator uses only earlier days inside the 2025-12
-evaluation stream. It corrects each day from the previous seven days of observed
+evaluation stream. Its current validation-selected setting waits for ten earlier
+realized days and then corrects each day from the previous five days of observed
 prediction errors, grouped by prediction bins, so it is compatible with a
-rolling day-ahead deployment where yesterday's realized prices are available.
+rolling day-ahead deployment where earlier realized prices are available.
+
+The online residual settings were selected on the 2025-10 through 2025-11
+validation stream. In a small grid over `window_days`, `min_history_days`, and
+`shrink`, the best validation accuracy was `0.8187824307784491` with
+`window_days=5`, `min_history_days=10`, and `shrink=0.5`; the corresponding
+2025-12 test accuracy is `0.7857284442214671`.
 
 The best pre-online base model remains:
 

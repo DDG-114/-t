@@ -177,9 +177,9 @@ far is the residual-calibrated state-aware GBM plus online residual adaptation.
 The online layer uses only earlier realized days in the December 2025 sequence:
 
 ```text
-accuracy: 0.7819
-MAE: 80.48
-RMSE: 165.54
+accuracy: 0.7857
+MAE: 80.43
+RMSE: 166.83
 cap_normalized_accuracy: 0.9195
 ```
 
@@ -194,7 +194,7 @@ window to start at 2024-04-01 reached `accuracy=0.7654`. Adding lagged weather
 forecast-error history lifted the verified result to `accuracy=0.7692`, mainly
 by raising predictions in the 150+ price regions. A residual calibration layer
 selected on the validation split lifted the result to `accuracy=0.7711`. Online
-residual adaptation lifted it further to `accuracy=0.7819`. It still does not
+residual adaptation lifted it further to `accuracy=0.7857`. It still does not
 close the 85% gap.
 
 The main remaining bottleneck is the high-price boundary. A diagnostic oracle
