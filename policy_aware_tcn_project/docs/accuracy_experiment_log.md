@@ -357,3 +357,15 @@ On 2025-12, the base residual-calibrated model was `0.7711041307390922`; the
 best tested analog setting (`k=45`, shrink `0.10`) reached only about `0.7543`.
 This shows that current internal features do not identify useful similar days
 for the December high/mid-price regime shift.
+
+## Mid/High-Price Weighted Residual Expert
+
+Added `scripts/19_diagnose_mid_high_residual_expert.py` to train a LightGBM
+residual expert with extra sample weight for true `Price >= 200`, `>= 500`, and
+`>= 800` slots, then select shrink/clip/gate parameters on 2025-10 through
+2025-11. With the current feature table, the base validation accuracy was
+`0.817692`; the best expert candidate reached only `0.817445`, so it was not
+even validation-positive. The selected 2025-12 accuracy was `0.770898`, below
+the base residual-calibrated model `0.771104` and far below the online best
+`0.785728`. This rules out a simple weighted residual expert on current
+features.

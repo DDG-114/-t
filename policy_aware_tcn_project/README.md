@@ -236,6 +236,15 @@ internal features do not make this route competitive:
   --predictions outputs/residual_calibrated_train2024q2/predictions/gbm_residual_anchor_all_predictions.csv
 ```
 
+A mid/high-price weighted residual expert diagnostic is available, but the
+current feature set does not make it validation-positive:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/19_diagnose_mid_high_residual_expert.py \
+  --features outputs/prevday_curve_2025_priority/features_prevday_curve_weather_error.csv \
+  --predictions outputs/residual_calibrated_train2024q2/predictions/gbm_residual_anchor_all_predictions.csv
+```
+
 GBM is now archived as the strongest classical baseline; see
 `docs/gbm_archive.md`. The active deep-learning route can use GPU training with
 weather and weather-error features:
