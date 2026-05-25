@@ -246,6 +246,22 @@ low-price slots. It is not adopted as the default path.
 - ExtraTrees diagnostic:
   - Best tested state-overridden accuracy was below `0.75`.
   - Result: still underpredicts high/cap price periods.
+- Online previous-day spike-shape diagnostic:
+  - Tested a leakage-safe rolling rule that lifts slots when the previous day
+    had high prices in the same or neighboring slots.
+  - Test-only best case improved the current online result only from
+    `0.7857284442214671` to about `0.7868465739374848`.
+  - Result: high-price persistence exists but is far too weak to close the 85%
+    gap without stronger scarcity/fundamental signals.
+
+## External Scarcity Signal Pipeline
+
+Added `features.external_signals` and documented the expected schema in
+`docs/external_scarcity_signals.md`. Forecast or disclosure columns that are
+known before the day-ahead forecast can be merged directly. Realized variables
+such as actual load, actual renewable output, actual generation, and realized
+reserve margin are only exposed as previous-day lags and rolling statistics, so
+the feature table remains leakage-safe.
 
 ## Main Bottleneck
 
