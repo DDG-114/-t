@@ -63,6 +63,13 @@ low-price slots. It is not adopted as the default path.
 
 ## Negative / Ablation Results
 
+- 2025-priority quantile LightGBM:
+  - Trained quantile regressors at q50/q60/q70/q80/q90 and blended upper
+    quantiles into suspected high-price slots.
+  - Best validation-selected test accuracy was about `0.7546`.
+  - Test-oracle capacity within this blend family was about `0.7619`.
+  - Result: upper-quantile regressors still fail to identify enough December
+    high/cap slots.
 - China holiday / adjusted-workday calendar features:
   - Added legal holiday, makeup-workday, workday/rest-day, and distance-to-holiday features.
   - 2025-priority validation improved to about `0.8790`, but 2025-12 test accuracy was only about `0.7579`.
