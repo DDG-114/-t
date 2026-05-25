@@ -1,0 +1,153 @@
+paths:
+  raw_data: data/raw/GS.csv
+  processed_features: data/processed/features.csv
+  model_dir: outputs/smoke_floor_correction/models
+  prediction_dir: outputs/smoke_floor_correction/predictions
+  report_dir: outputs/smoke_floor_correction/reports
+columns:
+  datetime: Date
+  target: Price
+  exogenous:
+  - 发电总出力预测
+  - 竞价空间
+  - 统一负荷预测
+  - 抽蓄
+  - 统一新能源预测
+  - 联络线计划
+data:
+  encoding: utf-8-sig
+  expected_slots_per_day: 96
+  slot_minutes: 15
+  target_cleaning:
+    enabled: true
+    cap_values_as_missing:
+    - 0.0
+    constant_run_exempt_values:
+    - 40.0
+    - 1000.0
+    constant_run_min_length: 672
+split:
+  train_start: '2025-01-01'
+  train_end: '2025-09-30'
+  valid_start: '2025-10-01'
+  valid_end: '2025-11-30'
+  test_start: '2025-12-01'
+  test_end: '2025-12-31'
+features:
+  price_lags_days:
+  - 1
+  - 2
+  - 7
+  - 14
+  rolling_windows_days:
+  - 3
+  - 7
+  - 14
+  include_market_features: true
+  include_floor_features: true
+  floor_price: 40.0
+  floor_run_windows_days:
+  - 1
+  - 3
+  - 7
+  long_floor_run_slots: 16
+  include_calendar_features: true
+  include_cyclic_slot_features: true
+metrics:
+  price_floor: 40.0
+  price_range: 1000.0
+  daily_accuracy_threshold: 0.85
+forecast:
+  target_date: '2026-04-28'
+  output_prefix: policy_aware_tcn_future_24h
+deep_model:
+  type: policy_aware_tcn
+  seed: 42
+  history_days: 14
+  horizon: 96
+  batch_size: 8
+  epochs: 2
+  patience: 2
+  min_delta: 0.0001
+  selection_metric: mean_daily_accuracy
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  lambda_ramp: 0.1
+  nll_weight: 0.05
+  floor_weight_boost: 0.4
+  floor_run_weight_boost: 0.2
+  floor_overprediction_weight: 0.05
+  floor_price_correction:
+    enabled: true
+    positive_sample_weight: 1.5
+    probability_threshold_grid:
+    - 0.1
+    - 0.15
+    - 0.2
+    - 0.25
+    - 0.3
+    - 0.35
+    - 0.4
+    - 0.45
+    - 0.5
+    - 0.55
+    - 0.6
+    - 0.65
+    - 0.7
+    - 0.75
+    - 0.8
+    - 0.85
+    - 0.9
+    - 0.95
+    prediction_ceiling_grid:
+    - null
+    - 80
+    - 120
+    - 160
+    - 200
+    - 300
+    - 500
+    - 800
+    - 1000
+    model:
+      max_iter: 500
+      learning_rate: 0.025
+      max_leaf_nodes: 15
+      l2_regularization: 0.1
+  add_missing_indicators: true
+  min_target_slots: 1
+  default_policy_regime: 0.0
+  policy_regime_by_year:
+    2025: 0.0
+    2026: 1.0
+  year_bounds:
+    2025:
+      min: 40.0
+      max: 1000.0
+    2026:
+      min: 0.0
+      max: 1000.0
+  synthetic_zero_floor:
+    enabled: true
+    policy_regime: 1.0
+    max_source_price: 120.0
+    target_upper: 80.0
+    min_changed_slots: 8
+    sample_weight: 0.35
+  tcn:
+    channels: 64
+    kernel_size: 3
+    dilations:
+    - 1
+    - 2
+    - 4
+    - 8
+    - 16
+    - 32
+    dropout: 0.15
+    future_layers: 2
+    static_hidden: 32
+    residual_scale: 600.0
+    output_sigma: true
+  device: cpu

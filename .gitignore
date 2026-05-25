@@ -1,0 +1,37 @@
+.agents/
+.codex/
+
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.ipynb_checkpoints/
+*.py[cod]
+
+# Raw and processed datasets stay local.
+GS(1).csv
+**/data/raw/**
+!**/data/raw/
+!**/data/raw/.gitkeep
+**/data/processed/**
+!**/data/processed/
+!**/data/processed/.gitkeep
+
+# Generated artifacts stay local.
+**/outputs/**
+!**/outputs/**/
+!**/outputs/**/.gitkeep
+*.pt
+*.pth
+*.pkl
+*.joblib
+*.npy
+*.npz
+
+# Local bundles and source attachments.
+*.zip
+*.pdf
+*.pptx
+*.jpg
+*.jpeg
+*.png
+
