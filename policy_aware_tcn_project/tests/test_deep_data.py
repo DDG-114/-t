@@ -159,3 +159,21 @@ def test_future_feature_spec_excludes_target_day_floor_leakage_columns():
     assert "floor_run_slots" not in spec.fut_cols
     assert "prev_floor_run_slots" not in spec.fut_cols
     assert "prev_long_floor_run" not in spec.fut_cols
+
+
+def test_deep_feature_spec_can_include_day_ahead_weather_features():
+    cfg = _config()
+    cfg["deep_model"]["include_weather_features"] = True
+    df = _frame()
+    df["weather_xian_temperature_2m_d1"] = 12.0
+    df["weather_error_xian_temperature_2m_d1_lag1d"] = -1.0
+    df["weather_actual_xian_temperature_2m"] = 13.0
+
+    spec = infer_deep_feature_spec(df, cfg)
+
+    assert "weather_xian_temperature_2m_d1" in spec.hist_cols
+    assert "weather_xian_temperature_2m_d1" in spec.fut_cols
+    assert "weather_error_xian_temperature_2m_d1_lag1d" in spec.hist_cols
+    assert "weather_error_xian_temperature_2m_d1_lag1d" in spec.fut_cols
+    assert "weather_actual_xian_temperature_2m" not in spec.hist_cols
+    assert "weather_actual_xian_temperature_2m" not in spec.fut_cols

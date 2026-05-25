@@ -83,6 +83,29 @@ low-price slots. It is not adopted as the default path.
 
 ## Negative / Ablation Results
 
+- Deep learning route after GBM archive:
+  - Added optional weather/weather-error features to the TCN sequence inputs
+    and a validation-selected high-price correction layer.
+  - `config/deep_weather_highcap.yaml`: GPU-trained weather TCN with
+    supply-demand-prior anchor, synthetic zero-floor samples, floor correction,
+    and high-price correction. Validation accuracy was `0.6706`; 2025-12 test
+    accuracy was `0.67069897689749`.
+  - `config/deep_weather_highcap_v2.yaml`: disabled synthetic zero-floor samples
+    and used previous-day anchor. Test accuracy was `0.6213359746179685`.
+  - `config/deep_weather_highcap_v3.yaml`: additionally disabled floor
+    correction. Test accuracy was `0.4428512776960952`.
+  - Result: the current TCN is runnable on GPU and now consumes weather inputs,
+    but it is not yet competitive with the GBM baseline. The main issue is an
+    unstable price anchor / floor-high tradeoff; the next deep structure should
+    learn residuals on top of the stronger GBM or state prior instead of
+    fitting the full price path mostly from scratch.
+- GBM residual refit after validation:
+  - Config: `config/residual_calibrator_refit_q2.yaml`
+  - Refit the residual calibrator through 2025-11 after validation-selected
+    parameter search.
+  - Test accuracy: `0.7646436863432745`
+  - Result: refitting through validation degraded 2025-12 transfer and supports
+    archiving GBM as a baseline rather than continuing small GBM postprocessors.
 - 2025-priority quantile LightGBM:
   - Trained quantile regressors at q50/q60/q70/q80/q90 and blended upper
     quantiles into suspected high-price slots.

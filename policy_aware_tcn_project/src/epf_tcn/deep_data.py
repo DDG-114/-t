@@ -113,6 +113,11 @@ QUANTILE_CONTEXT_PREFIXES = [
     "供需裕度_",
 ]
 
+WEATHER_CONTEXT_PREFIXES = [
+    "weather_",
+    "weather_error_",
+]
+
 TIME_COLS = [
     "slot",
     "hour",
@@ -165,6 +170,20 @@ def infer_deep_feature_spec(df: pd.DataFrame, config: Dict[str, Any]) -> DeepFea
 
     target = config["columns"]["target"]
     exogenous = config["columns"].get("exogenous", [])
+    weather_cols: List[str] = []
+    if bool(deep_cfg.get("include_weather_features", False)):
+        weather_prefixes = list(
+            deep_cfg.get("weather_feature_prefixes", WEATHER_CONTEXT_PREFIXES)
+        )
+        weather_cols = _existing_numeric_columns(
+            df,
+            [
+                col
+                for col in df.columns
+                if any(str(col).startswith(prefix) for prefix in weather_prefixes)
+                and not str(col).startswith("weather_actual_")
+            ],
+        )
     price_context = [
         col
         for col in df.columns
@@ -191,10 +210,25 @@ def infer_deep_feature_spec(df: pd.DataFrame, config: Dict[str, Any]) -> DeepFea
     fut_context_cols = [col for col in context_cols if col not in FUTURE_EXCLUDED_COLS]
 
     hist_cols = _dedupe(
-        [target, *exog_cols, *market_cols, *quantile_cols, *time_cols, *hist_context_cols]
+        [
+            target,
+            *exog_cols,
+            *market_cols,
+            *quantile_cols,
+            *weather_cols,
+            *time_cols,
+            *hist_context_cols,
+        ]
     )
     fut_cols = _dedupe(
-        [*exog_cols, *market_cols, *quantile_cols, *time_cols, *fut_context_cols]
+        [
+            *exog_cols,
+            *market_cols,
+            *quantile_cols,
+            *weather_cols,
+            *time_cols,
+            *fut_context_cols,
+        ]
     )
     return DeepFeatureSpec(hist_cols=hist_cols, fut_cols=fut_cols, static_cols=STATIC_COLS)
 

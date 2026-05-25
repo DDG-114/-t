@@ -49,6 +49,7 @@ class DeepTrainingResult:
     train_report: Dict[str, Any]
     valid_predictions: pd.DataFrame
     floor_price_correction: Any | None = None
+    high_price_correction: Any | None = None
     supply_demand_prior: SupplyDemandPriorModel | None = None
 
 
@@ -61,6 +62,19 @@ class FloorPriceCorrection:
     floor_price: float
     probability_threshold: float
     prediction_ceiling: float | None
+    report: Dict[str, Any]
+
+
+@dataclass
+class HighPriceCorrection:
+    """Validation-selected postprocessor for TCN high-price underprediction."""
+
+    classifier: Any
+    feature_cols: List[str]
+    target_threshold: float
+    probability_threshold: float
+    prediction_floor: float
+    max_floor_probability: float | None
     report: Dict[str, Any]
 
 
@@ -449,6 +463,11 @@ def _floor_classifier_feature_cols(features: pd.DataFrame, config: Dict[str, Any
     ]
 
 
+def _postprocessor_feature_cols(features: pd.DataFrame, config: Dict[str, Any]) -> List[str]:
+    """Return day-ahead safe feature columns for price-state postprocessors."""
+    return _floor_classifier_feature_cols(features, config)
+
+
 def _price_accuracy_from_frame(frame: pd.DataFrame, pred_col: str, price_floor: float) -> Dict[str, float]:
     valid = frame[["date", "y_true", pred_col]].dropna()
     if valid.empty:
@@ -469,6 +488,26 @@ def _price_accuracy_from_frame(frame: pd.DataFrame, pred_col: str, price_floor: 
         "daily_accuracy_sum": float(np.sum(daily_scores)),
         "overall_accuracy": float(1.0 - np.mean(overall_rel)),
     }
+
+
+def _weighted_accuracy_from_frame(
+    frame: pd.DataFrame,
+    pred_col: str,
+    price_floor: float,
+    high_boost: float,
+    cap_boost: float,
+) -> float:
+    """Return project accuracy with optional high/cap sample emphasis."""
+    valid = frame[["y_true", pred_col]].dropna()
+    if valid.empty:
+        return float("nan")
+    y_true = valid["y_true"].to_numpy(dtype=float)
+    y_pred = valid[pred_col].to_numpy(dtype=float)
+    point_accuracy = 1.0 - np.abs(y_pred - y_true) / np.maximum(np.abs(y_true), float(price_floor))
+    weights = np.ones_like(point_accuracy, dtype=float)
+    weights += float(high_boost) * (y_true >= 500.0)
+    weights += float(cap_boost) * (y_true >= 900.0)
+    return float(np.average(point_accuracy, weights=weights))
 
 
 def _apply_floor_correction_to_frame(
@@ -624,6 +663,163 @@ def train_floor_price_correction(
     )
 
 
+def _apply_high_price_correction_to_frame(
+    frame: pd.DataFrame,
+    probabilities: np.ndarray,
+    probability_threshold: float,
+    prediction_floor: float,
+    max_floor_probability: float | None,
+) -> pd.DataFrame:
+    """Lift predictions for validation-selected likely high-price slots."""
+    result = frame.copy()
+    result["high_price_probability"] = np.asarray(probabilities, dtype=np.float32)
+    mask = result["high_price_probability"] >= float(probability_threshold)
+    if max_floor_probability is not None and "floor_probability" in result.columns:
+        mask &= result["floor_probability"] <= float(max_floor_probability)
+    result["high_price_corrected"] = mask.astype(bool)
+    result.loc[mask, "y_pred"] = np.maximum(
+        result.loc[mask, "y_pred"].to_numpy(dtype=float),
+        float(prediction_floor),
+    )
+    return result
+
+
+def train_high_price_correction(
+    features: pd.DataFrame,
+    config: Dict[str, Any],
+    valid_frame: pd.DataFrame,
+) -> HighPriceCorrection | None:
+    """Train a conservative high-price classifier for TCN underprediction."""
+    correction_cfg = config.get("deep_model", {}).get("high_price_correction", {})
+    if not correction_cfg.get("enabled", False):
+        return None
+
+    target = config["columns"]["target"]
+    feature_cols = _postprocessor_feature_cols(features, config)
+    if not feature_cols:
+        return None
+
+    train_start, train_end = _date_range_days(config, "train")
+    valid_start, valid_end = _date_range_days(config, "valid")
+    train_mask = (
+        (features["date"] >= train_start)
+        & (features["date"] <= train_end)
+        & features[target].notna()
+    )
+    valid_mask = (
+        (features["date"] >= valid_start)
+        & (features["date"] <= valid_end)
+        & features[target].notna()
+    )
+    if not bool(train_mask.any()) or not bool(valid_mask.any()):
+        return None
+
+    price_floor = float(config.get("metrics", {}).get("price_floor", 40.0))
+    target_thresholds = correction_cfg.get("target_threshold_grid", [500.0, 600.0, 800.0, 900.0])
+    probability_thresholds = correction_cfg.get(
+        "probability_threshold_grid",
+        [round(float(value), 2) for value in np.linspace(0.05, 0.95, 19)],
+    )
+    prediction_floors = correction_cfg.get("prediction_floor_grid", [400.0, 500.0, 600.0, 700.0])
+    max_floor_probabilities = correction_cfg.get("max_floor_probability_grid", [None])
+
+    model_cfg = correction_cfg.get("model", {})
+    base_metric = _price_accuracy_from_frame(valid_frame, "y_pred", price_floor)
+    best: Dict[str, Any] | None = None
+    best_model = None
+    best_threshold = None
+    best_probabilities = None
+    reports: List[Dict[str, Any]] = []
+
+    for target_threshold in target_thresholds:
+        y_train = features.loc[train_mask, target].ge(float(target_threshold)).astype(int)
+        y_valid = features.loc[valid_mask, target].ge(float(target_threshold)).astype(int)
+        if y_train.nunique() < 2 or y_valid.nunique() < 2:
+            continue
+        classifier = HistGradientBoostingClassifier(
+            max_iter=int(model_cfg.get("max_iter", 500)),
+            learning_rate=float(model_cfg.get("learning_rate", 0.025)),
+            max_leaf_nodes=int(model_cfg.get("max_leaf_nodes", 15)),
+            l2_regularization=float(model_cfg.get("l2_regularization", 0.1)),
+            random_state=int(config.get("deep_model", {}).get("seed", 42)) + int(target_threshold),
+        )
+        positive_weight = float(correction_cfg.get("positive_sample_weight", 3.0))
+        sample_weight = np.where(y_train.to_numpy() == 1, positive_weight, 1.0)
+        classifier.fit(features.loc[train_mask, feature_cols], y_train, sample_weight=sample_weight)
+
+        valid_prob = classifier.predict_proba(features.loc[valid_mask, feature_cols])[:, 1]
+        aligned_valid_x = _aligned_features_for_predictions(features, valid_frame, feature_cols, config)
+        aligned_valid_prob = classifier.predict_proba(aligned_valid_x)[:, 1]
+        model_report = {
+            "target_threshold": float(target_threshold),
+            "train_positive_rows": int(y_train.sum()),
+            "valid_positive_rows": int(y_valid.sum()),
+            "valid_auc": float(roc_auc_score(y_valid, valid_prob)),
+            "valid_average_precision": float(average_precision_score(y_valid, valid_prob)),
+        }
+        reports.append(model_report)
+
+        for probability_threshold in probability_thresholds:
+            for prediction_floor in prediction_floors:
+                for max_floor_probability in max_floor_probabilities:
+                    corrected = _apply_high_price_correction_to_frame(
+                        valid_frame,
+                        probabilities=aligned_valid_prob,
+                        probability_threshold=float(probability_threshold),
+                        prediction_floor=float(prediction_floor),
+                        max_floor_probability=(
+                            None
+                            if max_floor_probability is None
+                            else float(max_floor_probability)
+                        ),
+                    )
+                    metric = _price_accuracy_from_frame(corrected, "y_pred", price_floor)
+                    changed = int(corrected["high_price_corrected"].sum())
+                    candidate = {
+                        **model_report,
+                        "probability_threshold": float(probability_threshold),
+                        "prediction_floor": float(prediction_floor),
+                        "max_floor_probability": (
+                            None
+                            if max_floor_probability is None
+                            else float(max_floor_probability)
+                        ),
+                        "mean_daily_accuracy": metric["mean_daily_accuracy"],
+                        "daily_accuracy_sum": metric["daily_accuracy_sum"],
+                        "overall_accuracy": metric["overall_accuracy"],
+                        "changed_slots": changed,
+                    }
+                    key = (candidate["mean_daily_accuracy"], -changed)
+                    if best is None or key > (best["mean_daily_accuracy"], -best["changed_slots"]):
+                        best = candidate
+                        best_model = classifier
+                        best_threshold = float(target_threshold)
+                        best_probabilities = aligned_valid_prob
+
+    if best is None or best["mean_daily_accuracy"] <= base_metric["mean_daily_accuracy"]:
+        return None
+
+    report = {
+        "enabled": True,
+        "feature_cols": feature_cols,
+        "train_rows": int(train_mask.sum()),
+        "valid_rows": int(valid_mask.sum()),
+        "base_valid_mean_daily_accuracy": base_metric["mean_daily_accuracy"],
+        "base_valid_daily_accuracy_sum": base_metric["daily_accuracy_sum"],
+        "selected": best,
+        "model_reports": reports,
+    }
+    return HighPriceCorrection(
+        classifier=best_model,
+        feature_cols=feature_cols,
+        target_threshold=float(best_threshold),
+        probability_threshold=float(best["probability_threshold"]),
+        prediction_floor=float(best["prediction_floor"]),
+        max_floor_probability=best["max_floor_probability"],
+        report=report,
+    )
+
+
 def apply_floor_price_correction(
     features: pd.DataFrame,
     frame: pd.DataFrame,
@@ -646,6 +842,31 @@ def apply_floor_price_correction(
         probability_threshold=correction.probability_threshold,
         prediction_ceiling=correction.prediction_ceiling,
         floor_price=correction.floor_price,
+    )
+
+
+def apply_high_price_correction(
+    features: pd.DataFrame,
+    frame: pd.DataFrame,
+    config: Dict[str, Any],
+    correction: HighPriceCorrection | None,
+) -> pd.DataFrame:
+    """Apply an optional trained high-price correction to predictions."""
+    if correction is None:
+        return frame
+    aligned_x = _aligned_features_for_predictions(
+        features,
+        frame,
+        correction.feature_cols,
+        config,
+    )
+    probabilities = correction.classifier.predict_proba(aligned_x)[:, 1]
+    return _apply_high_price_correction_to_frame(
+        frame,
+        probabilities=probabilities,
+        probability_threshold=correction.probability_threshold,
+        prediction_floor=correction.prediction_floor,
+        max_floor_probability=correction.max_floor_probability,
     )
 
 
@@ -759,12 +980,20 @@ def train_deep_model(
         valid_frame = windows_to_prediction_frame(valid_arrays, valid_pred, config)
         valid_eval = evaluate_predictions(valid_frame, config)
         valid_metric = float(valid_eval["summary"].get("mean_daily_accuracy") or -float("inf"))
+        valid_weighted_metric = _weighted_accuracy_from_frame(
+            valid_frame,
+            "y_pred",
+            price_floor=float(config.get("metrics", {}).get("price_floor", 40.0)),
+            high_boost=float(deep_cfg.get("selection_high_price_weight_boost", 0.0)),
+            cap_boost=float(deep_cfg.get("selection_cap_price_weight_boost", 0.0)),
+        )
         history.append(
             {
                 "epoch": epoch,
                 "train_loss": train_loss,
                 "valid_loss": valid_loss,
                 "valid_mean_daily_accuracy": valid_metric,
+                "valid_weighted_accuracy": valid_weighted_metric,
             }
         )
 
@@ -772,6 +1001,9 @@ def train_deep_model(
             improved = valid_loss < best_loss - min_delta
         elif selection_metric == "mean_daily_accuracy":
             improved = valid_metric > best_metric + min_delta
+        elif selection_metric == "weighted_accuracy":
+            improved = valid_weighted_metric > best_metric + min_delta
+            valid_metric = valid_weighted_metric
         else:
             raise ValueError(f"Unsupported deep_model.selection_metric: {selection_metric}")
 
@@ -793,6 +1025,8 @@ def train_deep_model(
     valid_frame = windows_to_prediction_frame(valid_arrays, valid_pred, config)
     floor_correction = train_floor_price_correction(features, config, valid_frame)
     valid_frame = apply_floor_price_correction(features, valid_frame, config, floor_correction)
+    high_correction = train_high_price_correction(features, config, valid_frame)
+    valid_frame = apply_high_price_correction(features, valid_frame, config, high_correction)
     valid_eval = evaluate_predictions(valid_frame, config)
     report = {
         "model_type": "policy_aware_tcn",
@@ -821,6 +1055,10 @@ def train_deep_model(
         report["floor_price_correction"] = floor_correction.report
     else:
         report["floor_price_correction"] = {"enabled": False}
+    if high_correction is not None:
+        report["high_price_correction"] = high_correction.report
+    else:
+        report["high_price_correction"] = {"enabled": False}
     if supply_demand_prior is not None:
         report["supply_demand_prior"] = supply_demand_prior.report
     else:
@@ -832,6 +1070,7 @@ def train_deep_model(
         train_report=report,
         valid_predictions=valid_frame,
         floor_price_correction=floor_correction,
+        high_price_correction=high_correction,
         supply_demand_prior=supply_demand_prior,
     )
 
@@ -845,6 +1084,9 @@ def save_deep_model(result: DeepTrainingResult, config: Dict[str, Any]) -> None:
     if result.floor_price_correction is not None:
         with (model_dir / "floor_price_correction.pkl").open("wb") as file:
             pickle.dump(result.floor_price_correction, file)
+    if result.high_price_correction is not None:
+        with (model_dir / "high_price_correction.pkl").open("wb") as file:
+            pickle.dump(result.high_price_correction, file)
     with (model_dir / "policy_aware_tcn_report.json").open("w", encoding="utf-8") as file:
         json.dump(result.train_report, file, ensure_ascii=False, indent=2)
 
@@ -852,6 +1094,15 @@ def save_deep_model(result: DeepTrainingResult, config: Dict[str, Any]) -> None:
 def load_floor_price_correction(config: Dict[str, Any]) -> FloorPriceCorrection | None:
     """Load the optional floor-price correction artifact."""
     path = Path(config["paths"]["model_dir"]) / "floor_price_correction.pkl"
+    if not path.exists():
+        return None
+    with path.open("rb") as file:
+        return pickle.load(file)
+
+
+def load_high_price_correction(config: Dict[str, Any]) -> HighPriceCorrection | None:
+    """Load the optional high-price correction artifact."""
+    path = Path(config["paths"]["model_dir"]) / "high_price_correction.pkl"
     if not path.exists():
         return None
     with path.open("rb") as file:
@@ -927,6 +1178,12 @@ def evaluate_trained_deep_model(
         config,
         correction=load_floor_price_correction(config),
     )
+    frame = apply_high_price_correction(
+        features,
+        frame,
+        config,
+        correction=load_high_price_correction(config),
+    )
     evaluation = evaluate_predictions(frame, config)
     save_evaluation(frame, evaluation, config, prefix=prefix)
     return evaluation
@@ -960,6 +1217,12 @@ def predict_forecast_day(
         frame,
         config,
         correction=load_floor_price_correction(config),
+    )
+    frame = apply_high_price_correction(
+        features,
+        frame,
+        config,
+        correction=load_high_price_correction(config),
     )
 
     pred_dir = Path(config["paths"]["prediction_dir"])

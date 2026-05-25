@@ -170,6 +170,20 @@ needed to postprocess forecast errors. If realized fundamentals become available
 this module can be upgraded to the QR/HS probabilistic-input route described in
 the literature.
 
+GBM is now archived as the strongest classical baseline; see
+`docs/gbm_archive.md`. The active deep-learning route can use GPU training with
+weather and weather-error features:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/02_train_policy_tcn.py \
+  --config config/deep_weather_highcap.yaml
+../dayahead_epf_agent_project/.venv/bin/python scripts/03_evaluate_policy_tcn.py \
+  --config config/deep_weather_highcap.yaml
+```
+
+The first GPU deep runs are not yet competitive with the GBM baseline; the best
+deep test accuracy so far is `0.6707`.
+
 ## Current Accuracy Ceiling
 
 On the December 2025 test split, the strongest verified internal-data result so
