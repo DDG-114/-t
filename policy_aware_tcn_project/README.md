@@ -170,6 +170,21 @@ needed to postprocess forecast errors. If realized fundamentals become available
 this module can be upgraded to the QR/HS probabilistic-input route described in
 the literature.
 
+External scarcity or realized-fundamental data can be merged into an existing
+feature table without rebuilding all weather features:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/12_add_external_signals.py \
+  --config config/external_scarcity_template.yaml \
+  --input-features outputs/prevday_curve_2025_priority/features_prevday_curve_weather_error.csv \
+  --output-features outputs/external_scarcity/features_external_scarcity.csv
+```
+
+Use `direct_columns` only for signals known before the day-ahead forecast, and
+put realized load/renewable/generation/reserve-margin columns under
+`lagged_actual_columns`; those are exposed only as previous-day lag and rolling
+features.
+
 GBM is now archived as the strongest classical baseline; see
 `docs/gbm_archive.md`. The active deep-learning route can use GPU training with
 weather and weather-error features:

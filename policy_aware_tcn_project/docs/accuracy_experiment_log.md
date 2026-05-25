@@ -253,6 +253,18 @@ low-price slots. It is not adopted as the default path.
     `0.7857284442214671` to about `0.7868465739374848`.
   - Result: high-price persistence exists but is far too weak to close the 85%
     gap without stronger scarcity/fundamental signals.
+- High-price classifier ranking diagnostic:
+  - Trained LightGBM classifiers on 2025-01 through 2025-09 features to predict
+    `Price >= 500` and `Price >= 800`, using 2025-10 through 2025-11 for
+    threshold selection and 2025-12 for test.
+  - The `Price >= 500` classifier had good 2025-12 ranking metrics
+    (`AUC ~= 0.879`, `AP ~= 0.488`), but validation-selected thresholds did not
+    transfer because December probabilities were much lower than validation
+    probabilities.
+  - Even with test-only Top-K/target selection, the classifier route topped out
+    around `0.7751`, still below the online residual best `0.7857`.
+  - Result: existing 2025 features contain some high-price ordering signal, but
+    not enough magnitude/gating information to reach 85%.
 
 ## External Scarcity Signal Pipeline
 
@@ -262,6 +274,8 @@ known before the day-ahead forecast can be merged directly. Realized variables
 such as actual load, actual renewable output, actual generation, and realized
 reserve margin are only exposed as previous-day lags and rolling statistics, so
 the feature table remains leakage-safe.
+`scripts/12_add_external_signals.py` can merge these columns into an existing
+weather/previous-day-curve feature table once the external CSV is available.
 
 ## Main Bottleneck
 
