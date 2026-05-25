@@ -70,6 +70,13 @@ low-price slots. It is not adopted as the default path.
   - Test-oracle capacity within this blend family was about `0.7619`.
   - Result: upper-quantile regressors still fail to identify enough December
     high/cap slots.
+- Previous-day price-curve features:
+  - Added neighboring-slot prices from the complete previous-day curve plus
+    previous-day curve mean/max/min/std and floor/high/cap ratios.
+  - 2025-priority validation reached about `0.8771`, but 2025-12 test accuracy
+    was only about `0.7570`.
+  - Result: useful for floor-price persistence, but not enough for December
+    high/cap regime transfer.
 - China holiday / adjusted-workday calendar features:
   - Added legal holiday, makeup-workday, workday/rest-day, and distance-to-holiday features.
   - 2025-priority validation improved to about `0.8790`, but 2025-12 test accuracy was only about `0.7579`.

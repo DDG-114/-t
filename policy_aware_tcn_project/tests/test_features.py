@@ -6,6 +6,7 @@ from epf_tcn.features import (
     add_china_calendar_features,
     add_exogenous_quantile_features,
     add_floor_price_features,
+    add_previous_day_curve_features,
 )
 
 
@@ -104,3 +105,36 @@ def test_china_calendar_features_mark_holidays_and_makeup_workdays():
     assert features.loc[1, "is_cn_workday"] == 1.0
     assert features.loc[2, "is_cn_rest_day"] == 1.0
     assert features.loc[3, "near_cn_holiday_3d"] == 0.0
+
+
+def test_previous_day_curve_features_use_only_previous_day_prices():
+    rows = []
+    for day in range(2):
+        for slot, price in enumerate([40.0, 100.0, 500.0, 1000.0]):
+            timestamp = pd.Timestamp("2025-01-01") + pd.Timedelta(
+                days=day,
+                minutes=15 * slot,
+            )
+            rows.append(
+                {
+                    "Date": timestamp,
+                    "date": timestamp.floor("D"),
+                    "slot": slot,
+                    "Price": price + day,
+                }
+            )
+    df = pd.DataFrame(rows)
+
+    features = add_previous_day_curve_features(
+        df,
+        target_col="Price",
+        slot_offsets=[-1, 1],
+    )
+    row = features[
+        (features["date"] == pd.Timestamp("2025-01-02")) & (features["slot"] == 1)
+    ].iloc[0]
+
+    assert row["prevday_price_offset_-1"] == pytest.approx(40.0)
+    assert row["prevday_price_offset_+1"] == pytest.approx(500.0)
+    assert row["prevday_curve_max"] == pytest.approx(1000.0)
+    assert row["prevday_curve_floor_ratio"] == pytest.approx(0.25)

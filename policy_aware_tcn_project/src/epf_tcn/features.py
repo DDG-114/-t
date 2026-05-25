@@ -160,6 +160,53 @@ def add_rolling_price_features(
     return result.sort_values(["date", "slot"]).reset_index(drop=True)
 
 
+def add_previous_day_curve_features(
+    df: pd.DataFrame,
+    target_col: str,
+    slot_offsets: List[int] | None = None,
+) -> pd.DataFrame:
+    """Add previous-day neighboring-slot price curve features.
+
+    These features use only the fully observed previous-day price curve. They
+    complement same-slot lags by exposing whether yesterday's nearby slots were
+    floor, normal, or high-price periods.
+    """
+    if slot_offsets is None:
+        slot_offsets = [-8, -4, -2, -1, 1, 2, 4, 8]
+
+    result = df.copy()
+    base = result[["date", "slot", target_col]].copy()
+    additions: List[pd.DataFrame] = []
+    for offset in slot_offsets:
+        shifted = base.copy()
+        shifted["slot"] = shifted["slot"] - int(offset)
+        shifted["date"] = shifted["date"] + pd.Timedelta(days=1)
+        shifted = shifted.rename(
+            columns={target_col: f"prevday_price_offset_{int(offset):+d}"}
+        )
+        additions.append(shifted)
+
+    for shifted in additions:
+        result = result.merge(shifted, on=["date", "slot"], how="left")
+
+    daily = (
+        base.groupby("date")[target_col]
+        .agg(
+            prevday_curve_mean="mean",
+            prevday_curve_max="max",
+            prevday_curve_min="min",
+            prevday_curve_std="std",
+            prevday_curve_floor_ratio=lambda values: float(values.le(45.0).mean()),
+            prevday_curve_high_ratio=lambda values: float(values.ge(600.0).mean()),
+            prevday_curve_cap_ratio=lambda values: float(values.ge(900.0).mean()),
+        )
+        .reset_index()
+    )
+    daily["date"] = daily["date"] + pd.Timedelta(days=1)
+    result = result.merge(daily, on="date", how="left")
+    return result.sort_values(["date", "slot"]).reset_index(drop=True)
+
+
 def _quantile_label(level: float) -> str:
     scaled = float(level) * 100
     if abs(scaled - round(scaled)) < 1e-9:
@@ -363,6 +410,15 @@ def build_features(df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
         target_col=target,
         windows=config["features"].get("rolling_windows_days", [3, 7, 14]),
     )
+    if config["features"].get("include_previous_day_curve_features", False):
+        result = add_previous_day_curve_features(
+            result,
+            target_col=target,
+            slot_offsets=config["features"].get(
+                "previous_day_curve_slot_offsets",
+                [-8, -4, -2, -1, 1, 2, 4, 8],
+            ),
+        )
     if config["features"].get("include_floor_features", True):
         result = add_floor_price_features(
             result,
