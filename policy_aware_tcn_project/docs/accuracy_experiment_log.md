@@ -313,3 +313,14 @@ not just cap-price classification.
 
 `scripts/14_analyze_accuracy_gap.py` reproduces this gap analysis for any
 candidate prediction file.
+
+## External Data Availability Check
+
+Public searches for Shaanxi 2025 spot-market 96-slot load, renewable output,
+available capacity, reserve margin, outage, or market-scarcity disclosure data
+did not find a directly downloadable machine-readable history file. The public
+results mainly describe market operation, continuous settlement, rules, and
+information-disclosure mechanisms. The codebase now includes
+`scripts/15_audit_external_signal_file.py` to verify a supplied external CSV
+before feature merging. In the current workspace, `data/external/scarcity_signals.csv`
+is missing, so the external-signal route cannot yet be trained or evaluated.

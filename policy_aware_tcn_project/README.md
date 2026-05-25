@@ -174,6 +174,9 @@ External scarcity or realized-fundamental data can be merged into an existing
 feature table without rebuilding all weather features:
 
 ```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/15_audit_external_signal_file.py \
+  --config config/external_scarcity_template.yaml
+
 ../dayahead_epf_agent_project/.venv/bin/python scripts/12_add_external_signals.py \
   --config config/external_scarcity_template.yaml \
   --input-features outputs/prevday_curve_2025_priority/features_prevday_curve_weather_error.csv \
