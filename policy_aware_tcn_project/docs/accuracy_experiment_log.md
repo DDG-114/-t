@@ -63,6 +63,10 @@ low-price slots. It is not adopted as the default path.
 
 ## Negative / Ablation Results
 
+- China holiday / adjusted-workday calendar features:
+  - Added legal holiday, makeup-workday, workday/rest-day, and distance-to-holiday features.
+  - 2025-priority validation improved to about `0.8790`, but 2025-12 test accuracy was only about `0.7579`.
+  - Result: the 2025-11 calendar relationship did not transfer to December.
 - 2025-priority scarcity rule postprocessing:
   - Validation-selected rule used high net load and low renewable forecast to
     lift suspected scarcity slots.

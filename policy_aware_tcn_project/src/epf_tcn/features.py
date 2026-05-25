@@ -41,6 +41,84 @@ def add_cyclic_features(df: pd.DataFrame, expected_slots: int = 96) -> pd.DataFr
     return result
 
 
+CN_HOLIDAY_RANGES = [
+    ("2024-01-01", "2024-01-01"),
+    ("2024-02-10", "2024-02-17"),
+    ("2024-04-04", "2024-04-06"),
+    ("2024-05-01", "2024-05-05"),
+    ("2024-06-08", "2024-06-10"),
+    ("2024-09-15", "2024-09-17"),
+    ("2024-10-01", "2024-10-07"),
+    ("2025-01-01", "2025-01-01"),
+    ("2025-01-28", "2025-02-04"),
+    ("2025-04-04", "2025-04-06"),
+    ("2025-05-01", "2025-05-05"),
+    ("2025-05-31", "2025-06-02"),
+    ("2025-10-01", "2025-10-08"),
+]
+CN_MAKEUP_WORKDAYS = [
+    "2024-02-04",
+    "2024-02-18",
+    "2024-04-07",
+    "2024-04-28",
+    "2024-05-11",
+    "2024-09-14",
+    "2024-09-29",
+    "2024-10-12",
+    "2025-01-26",
+    "2025-02-08",
+    "2025-04-27",
+    "2025-09-28",
+    "2025-10-11",
+]
+
+
+def _date_set_from_ranges(ranges: List[tuple[str, str]]) -> set[pd.Timestamp]:
+    dates: set[pd.Timestamp] = set()
+    for start, end in ranges:
+        for date in pd.date_range(start, end, freq="D"):
+            dates.add(pd.Timestamp(date).normalize())
+    return dates
+
+
+def add_china_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add leakage-free China holiday and adjusted-workday calendar features."""
+    result = df.copy()
+    normalized_date = pd.to_datetime(result["date"]).dt.normalize()
+    holidays = _date_set_from_ranges(CN_HOLIDAY_RANGES)
+    makeup_workdays = {pd.Timestamp(date).normalize() for date in CN_MAKEUP_WORKDAYS}
+    holiday_index = pd.DatetimeIndex(sorted(holidays))
+
+    is_holiday = normalized_date.isin(holidays)
+    is_makeup = normalized_date.isin(makeup_workdays)
+    is_weekend = result.get("is_weekend", normalized_date.dt.dayofweek.ge(5)).astype(bool)
+    is_workday = (~is_holiday) & (~is_weekend | is_makeup)
+
+    result["is_cn_holiday"] = is_holiday.astype(float)
+    result["is_cn_makeup_workday"] = is_makeup.astype(float)
+    result["is_cn_workday"] = is_workday.astype(float)
+    result["is_cn_rest_day"] = (~is_workday).astype(float)
+
+    days_to_holiday = []
+    days_since_holiday = []
+    for date in normalized_date:
+        future = holiday_index[holiday_index >= date]
+        past = holiday_index[holiday_index <= date]
+        days_to_holiday.append(
+            float((future[0] - date).days) if len(future) else np.nan
+        )
+        days_since_holiday.append(
+            float((date - past[-1]).days) if len(past) else np.nan
+        )
+    result["days_to_cn_holiday"] = np.clip(days_to_holiday, 0, 30)
+    result["days_since_cn_holiday"] = np.clip(days_since_holiday, 0, 30)
+    result["near_cn_holiday_3d"] = (
+        (result["days_to_cn_holiday"] <= 3)
+        | (result["days_since_cn_holiday"] <= 3)
+    ).astype(float)
+    return result
+
+
 def add_price_lag_features(
     df: pd.DataFrame,
     target_col: str,
@@ -251,6 +329,9 @@ def build_features(df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
 
     if config["features"].get("include_cyclic_slot_features", True):
         result = add_cyclic_features(result, expected_slots=expected_slots)
+
+    if config["features"].get("include_china_calendar_features", False):
+        result = add_china_calendar_features(result)
 
     if config["features"].get("include_exogenous_quantile_features", False):
         result = add_exogenous_quantile_features(
