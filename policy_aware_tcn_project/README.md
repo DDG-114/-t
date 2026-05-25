@@ -170,6 +170,11 @@ needed to postprocess forecast errors. If realized fundamentals become available
 this module can be upgraded to the QR/HS probabilistic-input route described in
 the literature.
 
+Weather merging also adds winter/summer stress proxies, low-wind and low-solar
+risk, and simple wind/solar power proxies derived from the existing Open-Meteo
+forecast columns. These features are available for future experiments, although
+the first residual-calibrator run with them did not beat the current best.
+
 External scarcity or realized-fundamental data can be merged into an existing
 feature table without rebuilding all weather features:
 

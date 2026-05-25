@@ -280,7 +280,73 @@ def merge_weather_features(
     weather_cols = [col for col in merged.columns if col.startswith("weather_")]
     for col in weather_cols:
         merged[col] = pd.to_numeric(merged[col], errors="coerce")
-    return merged
+    return add_weather_derived_features(merged)
+
+
+def add_weather_derived_features(features: pd.DataFrame) -> pd.DataFrame:
+    """Add power-market weather proxies from forecast weather columns.
+
+    These features keep the same availability as the forecast inputs. They are
+    intended to expose winter heating demand, summer cooling demand, low-wind
+    renewable risk, and low-radiation solar risk without requiring additional
+    external data.
+    """
+    result = features.copy()
+    for lead in [1, 2, 3]:
+        temp = f"weather_sx_temperature_2m_d{lead}_mean"
+        wind = f"weather_sx_wind_speed_10m_d{lead}_mean"
+        radiation = f"weather_sx_shortwave_radiation_d{lead}_mean"
+        cloud = f"weather_sx_cloud_cover_d{lead}_mean"
+        precipitation = f"weather_sx_precipitation_d{lead}_mean"
+        humidity = f"weather_sx_relative_humidity_2m_d{lead}_mean"
+
+        if temp in result.columns:
+            temp_values = pd.to_numeric(result[temp], errors="coerce")
+            result[f"weather_sx_heating_degree_d{lead}"] = np.maximum(18.0 - temp_values, 0.0)
+            result[f"weather_sx_cooling_degree_d{lead}"] = np.maximum(temp_values - 24.0, 0.0)
+            result[f"weather_sx_cold_stress_d{lead}"] = np.maximum(5.0 - temp_values, 0.0)
+        if wind in result.columns:
+            wind_values = pd.to_numeric(result[wind], errors="coerce")
+            result[f"weather_sx_low_wind_risk_d{lead}"] = np.maximum(3.0 - wind_values, 0.0)
+            result[f"weather_sx_wind_power_proxy_d{lead}"] = np.power(
+                np.clip(wind_values, 0.0, 25.0),
+                3,
+            )
+        if radiation in result.columns:
+            radiation_values = pd.to_numeric(result[radiation], errors="coerce")
+            result[f"weather_sx_low_solar_risk_d{lead}"] = np.maximum(
+                120.0 - radiation_values,
+                0.0,
+            )
+            result[f"weather_sx_solar_power_proxy_d{lead}"] = np.maximum(
+                radiation_values,
+                0.0,
+            )
+        if cloud in result.columns and radiation in result.columns:
+            result[f"weather_sx_cloud_solar_stress_d{lead}"] = (
+                pd.to_numeric(result[cloud], errors="coerce")
+                * result[f"weather_sx_low_solar_risk_d{lead}"]
+            )
+        if temp in result.columns and wind in result.columns:
+            result[f"weather_sx_cold_low_wind_stress_d{lead}"] = (
+                result[f"weather_sx_cold_stress_d{lead}"]
+                * result[f"weather_sx_low_wind_risk_d{lead}"]
+            )
+        if temp in result.columns and humidity in result.columns:
+            result[f"weather_sx_heat_humidity_stress_d{lead}"] = (
+                result[f"weather_sx_cooling_degree_d{lead}"]
+                * pd.to_numeric(result[humidity], errors="coerce")
+                / 100.0
+            )
+        if precipitation in result.columns and radiation in result.columns:
+            result[f"weather_sx_rain_solar_stress_d{lead}"] = (
+                pd.to_numeric(result[precipitation], errors="coerce")
+                * result[f"weather_sx_low_solar_risk_d{lead}"]
+            )
+
+    for col in [col for col in result.columns if col.startswith("weather_sx_")]:
+        result[col] = pd.to_numeric(result[col], errors="coerce")
+    return result
 
 
 def add_weather_error_history_features(

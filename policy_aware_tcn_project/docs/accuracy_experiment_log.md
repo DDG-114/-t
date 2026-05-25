@@ -369,3 +369,16 @@ even validation-positive. The selected 2025-12 accuracy was `0.770898`, below
 the base residual-calibrated model `0.771104` and far below the online best
 `0.785728`. This rules out a simple weighted residual expert on current
 features.
+
+## Weather-Derived Stress Features
+
+Added forecast-derived weather stress proxies in `epf_tcn.weather`: heating
+degree, cooling degree, cold stress, low-wind risk, low-solar risk, wind/solar
+power proxies, and selected interaction terms. A weather-derived feature table
+added 33 columns on top of `features_weather_error.csv`. Re-training the
+state-aware GBM and residual calibrator with these columns reached only
+`0.7583990959680931` for state GBM and `0.7641334953365889` after residual
+calibration on 2025-12, below both the original residual-calibrated weather
+result `0.7711041307390922` and the online residual best `0.7857284442214671`.
+The derived weather proxies are kept as reusable features, but they are not the
+current best route.
