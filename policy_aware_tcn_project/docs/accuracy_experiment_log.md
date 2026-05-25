@@ -346,3 +346,14 @@ residual-mean model had validation MAE near `6.05` but 2025-12 MAE near
 The residual-median variant was less damaging but still reduced accuracy to
 about `0.7364` at shrink `0.25`. This rules out daily bias correction from the
 current internal features as a viable path to 85%.
+
+## Analog-Day Residual Curve Diagnostic
+
+Added `scripts/18_diagnose_analog_day_residual.py` to test a literature-style
+similar-day correction: aggregate each day into load, renewable, supply-margin,
+previous-day-curve, floor-ratio, and weather descriptors, find the nearest
+historical days, and add a weighted average of their 96-slot residual curves.
+On 2025-12, the base residual-calibrated model was `0.7711041307390922`; the
+best tested analog setting (`k=45`, shrink `0.10`) reached only about `0.7543`.
+This shows that current internal features do not identify useful similar days
+for the December high/mid-price regime shift.

@@ -227,6 +227,15 @@ transfer well enough for this to be used as a postprocessor:
   --predictions outputs/residual_calibrated_train2024q2/predictions/gbm_residual_anchor_all_predictions.csv
 ```
 
+Analog-day residual correction is also available as a diagnostic. Current
+internal features do not make this route competitive:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/18_diagnose_analog_day_residual.py \
+  --features outputs/prevday_curve_2025_priority/features_prevday_curve_weather_error.csv \
+  --predictions outputs/residual_calibrated_train2024q2/predictions/gbm_residual_anchor_all_predictions.csv
+```
+
 GBM is now archived as the strongest classical baseline; see
 `docs/gbm_archive.md`. The active deep-learning route can use GPU training with
 weather and weather-error features:
