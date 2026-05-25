@@ -12,6 +12,7 @@ dependencies = [
     "pytest>=7.4",
     "torch>=2.2",
     "typeguard>=4.0",
+    "lightgbm>=4.0",
 ]
 
 [tool.pytest.ini_options]
