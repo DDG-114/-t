@@ -218,6 +218,15 @@ has not beaten the current hand-selected online best on 2025-12:
   --prefix online_residual_tuned_valid100
 ```
 
+Daily bias correction can be diagnosed separately; current 2025 features do not
+transfer well enough for this to be used as a postprocessor:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/17_diagnose_daily_bias_correction.py \
+  --features outputs/prevday_curve_2025_priority/features_prevday_curve_weather_error.csv \
+  --predictions outputs/residual_calibrated_train2024q2/predictions/gbm_residual_anchor_all_predictions.csv
+```
+
 GBM is now archived as the strongest classical baseline; see
 `docs/gbm_archive.md`. The active deep-learning route can use GPU training with
 weather and weather-error features:

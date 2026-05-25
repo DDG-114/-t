@@ -334,3 +334,15 @@ config with validation accuracy `0.818310971115351`, but its 2025-12 accuracy
 was only `0.7758869665543694`, below the current hand-selected online best
 `0.7857284442214671`. This confirms that the 2025-10/11 residual relationship
 does not transfer strongly enough to solve the December gap.
+
+## Daily Bias Correction Diagnostic
+
+Added `scripts/17_diagnose_daily_bias_correction.py` to test whether daily
+aggregate features can predict each day's residual bias. Using 2025-01 through
+2025-09 for training and 2025-10 through 2025-11 for validation, the daily
+residual-mean model had validation MAE near `6.05` but 2025-12 MAE near
+`33.35`; applying the correction reduced 2025-12 accuracy from
+`0.7711041307390922` to `0.6572` at shrink `0.25` and lower at larger shrink.
+The residual-median variant was less damaging but still reduced accuracy to
+about `0.7364` at shrink `0.25`. This rules out daily bias correction from the
+current internal features as a viable path to 85%.
