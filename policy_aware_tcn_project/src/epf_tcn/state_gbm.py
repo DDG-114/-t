@@ -55,6 +55,20 @@ PRICE_DAY_AGG_COLS = [
     "floor_ratio_3d",
     "floor_ratio_7d",
 ]
+SCARCITY_STATE_COLS = [
+    "发电总出力预测",
+    "竞价空间",
+    "统一负荷预测",
+    "统一新能源预测",
+    "联络线计划",
+    "净负荷",
+    "供需裕度",
+    "新能源占比",
+    "竞价空间占比",
+    "联络线占比",
+]
+SCARCITY_WINDOWS = [7, 14, 28, 56]
+SCARCITY_QUANTILES = [0.1, 0.25, 0.5, 0.75, 0.9]
 
 
 @dataclass
@@ -182,8 +196,95 @@ def add_state_gbm_features(features: pd.DataFrame, config: Dict[str, Any]) -> pd
     if {"供需裕度", "统一负荷预测"}.issubset(result.columns):
         result["供需裕度_负荷比"] = result["供需裕度"] / result["统一负荷预测"].replace(0, np.nan)
 
+    result = add_scarcity_state_features(result, config)
+
     result = result.copy()
     return result.sort_values(["date", "slot"]).reset_index(drop=True)
+
+
+def add_scarcity_state_features(features: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
+    """Add leakage-safe rolling scarcity features for current forecasts.
+
+    For each current-day fundamental forecast, these features compare the value
+    with previous same-slot forecast distributions. This encodes whether the
+    current supply-demand state is historically high or low without using the
+    target day's realized price.
+    """
+    cfg = config.get("state_gbm", {}).get("scarcity_features", {})
+    if not bool(cfg.get("enabled", False)):
+        return features
+
+    result = features.sort_values(["slot", "date"]).copy()
+    generated: Dict[str, pd.Series] = {}
+    cols = cfg.get("source_columns", SCARCITY_STATE_COLS)
+    source_cols = [
+        col
+        for col in cols
+        if col in result.columns and pd.api.types.is_numeric_dtype(result[col])
+    ]
+    windows = [int(window) for window in cfg.get("windows_days", SCARCITY_WINDOWS)]
+    quantiles = [float(level) for level in cfg.get("quantiles", SCARCITY_QUANTILES)]
+
+    for col in source_cols:
+        current = pd.to_numeric(result[col], errors="coerce")
+        shifted = current.groupby(result["slot"], group_keys=False).shift(1)
+        for window in windows:
+            rolled = shifted.groupby(result["slot"], group_keys=False).rolling(window)
+            mean = rolled.mean().reset_index(level=0, drop=True)
+            std = rolled.std().reset_index(level=0, drop=True)
+            minimum = rolled.min().reset_index(level=0, drop=True)
+            maximum = rolled.max().reset_index(level=0, drop=True)
+
+            generated[f"{col}_scarcity_mean_{window}d"] = mean
+            generated[f"{col}_scarcity_delta_mean_{window}d"] = current - mean
+            generated[f"{col}_scarcity_z_{window}d"] = (current - mean) / std.replace(0, np.nan)
+            generated[f"{col}_scarcity_range_pos_{window}d"] = (
+                (current - minimum) / (maximum - minimum).replace(0, np.nan)
+            )
+
+            quantile_values: Dict[float, pd.Series] = {}
+            for level in quantiles:
+                label = _quantile_label(level)
+                quantile = rolled.quantile(level).reset_index(level=0, drop=True)
+                quantile_values[level] = quantile
+                generated[f"{col}_scarcity_{label}_{window}d"] = quantile
+                generated[f"{col}_scarcity_delta_{label}_{window}d"] = current - quantile
+
+            q10 = quantile_values.get(0.1)
+            q90 = quantile_values.get(0.9)
+            if q10 is not None and q90 is not None:
+                generated[f"{col}_scarcity_tail_pos_{window}d"] = (
+                    (current - q10) / (q90 - q10).replace(0, np.nan)
+                )
+                generated[f"{col}_scarcity_above_q90_{window}d"] = current.gt(q90).astype(float)
+                generated[f"{col}_scarcity_below_q10_{window}d"] = current.lt(q10).astype(float)
+
+    if generated:
+        result = pd.concat([result, pd.DataFrame(generated, index=result.index)], axis=1)
+
+    if {"净负荷", "统一新能源预测"}.issubset(result.columns):
+        for window in windows:
+            net_z = f"净负荷_scarcity_z_{window}d"
+            renewable_z = f"统一新能源预测_scarcity_z_{window}d"
+            if net_z in result.columns and renewable_z in result.columns:
+                result[f"scarcity_pressure_z_{window}d"] = result[net_z] - result[renewable_z]
+    if {"竞价空间占比", "新能源占比"}.issubset(result.columns):
+        for window in windows:
+            bid_z = f"竞价空间占比_scarcity_z_{window}d"
+            renewable_share_z = f"新能源占比_scarcity_z_{window}d"
+            if bid_z in result.columns and renewable_share_z in result.columns:
+                result[f"scarcity_share_pressure_z_{window}d"] = (
+                    result[bid_z] - result[renewable_share_z]
+                )
+
+    return result.sort_values(["date", "slot"]).reset_index(drop=True)
+
+
+def _quantile_label(level: float) -> str:
+    scaled = float(level) * 100
+    if abs(scaled - round(scaled)) < 1e-9:
+        return f"q{int(round(scaled)):02d}"
+    return f"q{int(round(float(level) * 1000)):03d}"
 
 
 def _date_range_days(config: Dict[str, Any], split_name: str) -> tuple[pd.Timestamp, pd.Timestamp]:
