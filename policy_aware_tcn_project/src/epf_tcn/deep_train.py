@@ -26,6 +26,14 @@ from epf_tcn.deep_data import (
 )
 from epf_tcn.deep_models import build_policy_aware_tcn, module_summary, require_torch
 from epf_tcn.evaluate import evaluate_predictions, save_evaluation
+from epf_tcn.supply_demand_prior import (
+    SupplyDemandPriorModel,
+    add_supply_demand_prior_column,
+    fit_supply_demand_prior,
+    load_supply_demand_prior,
+    save_supply_demand_prior,
+    supply_demand_prior_enabled,
+)
 
 torch = require_torch()
 nn = torch.nn
@@ -41,6 +49,7 @@ class DeepTrainingResult:
     train_report: Dict[str, Any]
     valid_predictions: pd.DataFrame
     floor_price_correction: Any | None = None
+    supply_demand_prior: SupplyDemandPriorModel | None = None
 
 
 @dataclass
@@ -399,13 +408,16 @@ def windows_to_prediction_frame(
             y_mask = arrays["y_mask"][day_index]
         for slot in range(horizon):
             observed = y_true is not None and y_mask is not None and y_mask[slot] > 0
+            anchor_price = float(arrays["anchor"][day_index, slot])
             rows.append(
                 {
                     "Date": target_day + pd.Timedelta(minutes=15 * slot),
                     "date": target_day.date().isoformat(),
                     "slot": slot,
                     "y_true": np.nan if not observed else float(y_true[slot]),
+                    "anchor_price": anchor_price,
                     "y_pred": float(predictions[day_index, slot]),
+                    "tcn_residual": float(predictions[day_index, slot] - anchor_price),
                     "policy_regime": float(arrays["policy_regime"][day_index]),
                     "price_lower_bound": float(arrays["lower_bound"][day_index]),
                     "price_upper_bound": float(arrays["upper_bound"][day_index]),
@@ -686,6 +698,11 @@ def train_deep_model(
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
+    supply_demand_prior = None
+    if supply_demand_prior_enabled(config):
+        supply_demand_prior = fit_supply_demand_prior(features, config)
+        features = add_supply_demand_prior_column(features, config, supply_demand_prior)
+
     feature_spec, train_windows, valid_windows, _, window_stats = prepare_deep_windows(features, config)
     if not train_windows:
         raise ValueError("No train windows were built for deep model training.")
@@ -804,6 +821,10 @@ def train_deep_model(
         report["floor_price_correction"] = floor_correction.report
     else:
         report["floor_price_correction"] = {"enabled": False}
+    if supply_demand_prior is not None:
+        report["supply_demand_prior"] = supply_demand_prior.report
+    else:
+        report["supply_demand_prior"] = {"enabled": False}
     return DeepTrainingResult(
         model=model,
         feature_spec=feature_spec,
@@ -811,6 +832,7 @@ def train_deep_model(
         train_report=report,
         valid_predictions=valid_frame,
         floor_price_correction=floor_correction,
+        supply_demand_prior=supply_demand_prior,
     )
 
 
@@ -819,6 +841,7 @@ def save_deep_model(result: DeepTrainingResult, config: Dict[str, Any]) -> None:
     model_dir = Path(config["paths"]["model_dir"])
     model_dir.mkdir(parents=True, exist_ok=True)
     torch.save(result.model.state_dict(), model_dir / "policy_aware_tcn.pt")
+    save_supply_demand_prior(result.supply_demand_prior, config)
     if result.floor_price_correction is not None:
         with (model_dir / "floor_price_correction.pkl").open("wb") as file:
             pickle.dump(result.floor_price_correction, file)
@@ -889,6 +912,9 @@ def evaluate_trained_deep_model(
 ) -> Dict[str, Any]:
     """Load, predict the test split, save predictions and reports."""
     model, feature_spec, normalizer = load_deep_model(config)
+    prior = load_supply_demand_prior(config)
+    if prior is not None:
+        features = add_supply_demand_prior_column(features, config, prior)
     windows = build_daily_windows(features, config, feature_spec=feature_spec, require_target=True)
     test_start, test_end = _date_range_days(config, "test")
     test_windows = filter_windows_by_date_range(windows, test_start, test_end)
@@ -914,6 +940,9 @@ def predict_forecast_day(
 ) -> Dict[str, Any]:
     """Predict one configured day that may not have target labels."""
     model, feature_spec, normalizer = load_deep_model(config)
+    prior = load_supply_demand_prior(config)
+    if prior is not None:
+        features = add_supply_demand_prior_column(features, config, prior)
     windows = build_daily_windows(
         features,
         config,

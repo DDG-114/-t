@@ -329,8 +329,13 @@ def build_daily_windows(
         if require_target and int(observed.sum()) < min_target_slots:
             continue
 
-        previous_day = complete_days[hist_days[-1]]
-        anchor = previous_day[cfg.target_col].to_numpy(dtype=np.float32)
+        anchor = _anchor_for_target_day(
+            complete_days=complete_days,
+            hist_days=hist_days,
+            target_group=target_group,
+            cfg=cfg,
+            config=config,
+        )
         static_map = static_features_for_day(target_day, config)
         static_vec = np.asarray(
             [static_map[col] for col in spec.static_cols],
@@ -356,6 +361,35 @@ def build_daily_windows(
             )
         )
     return windows
+
+
+def _anchor_for_target_day(
+    complete_days: Dict[pd.Timestamp, pd.DataFrame],
+    hist_days: Sequence[pd.Timestamp],
+    target_group: pd.DataFrame,
+    cfg: WindowConfig,
+    config: Dict[str, Any],
+) -> np.ndarray:
+    """Return the residual anchor used by the TCN output head."""
+    deep_cfg = config.get("deep_model", {})
+    prior_cfg = deep_cfg.get("supply_demand_prior", {})
+    anchor_source = str(
+        deep_cfg.get(
+            "anchor_source",
+            "supply_demand_prior" if prior_cfg.get("enabled", False) else "previous_day",
+        )
+    )
+    if anchor_source == "previous_day":
+        previous_day = complete_days[hist_days[-1]]
+        return previous_day[cfg.target_col].to_numpy(dtype=np.float32)
+    if anchor_source == "supply_demand_prior":
+        prior_col = str(prior_cfg.get("output_col", "sd_prior_price"))
+        if prior_col not in target_group.columns:
+            raise ValueError(
+                f"deep_model.anchor_source=supply_demand_prior requires feature column: {prior_col}"
+            )
+        return target_group[prior_col].to_numpy(dtype=np.float32)
+    raise ValueError(f"Unsupported deep_model.anchor_source: {anchor_source}")
 
 
 def filter_windows_by_date_range(

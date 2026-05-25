@@ -81,6 +81,25 @@ deep_model:
   floor_weight_boost: 0.3
   floor_run_weight_boost: 0.15
   floor_overprediction_weight: 0.03
+  anchor_source: supply_demand_prior
+  supply_demand_prior:
+    enabled: true
+    output_col: sd_prior_price
+    ridge_alpha: 20.0
+    hinge_quantiles:
+    - 0.2
+    - 0.5
+    - 0.8
+    hinge_cols:
+    - 净负荷
+    - 供需裕度
+    - 新能源占比
+    - 竞价空间
+    - 竞价空间占比
+    high_price_weight_boost: 0.4
+    low_price_weight_boost: 0.4
+    cap_price_weight_boost: 0.6
+    floor_weight_boost: 0.4
   floor_price_correction:
     enabled: true
     positive_sample_weight: 1.5

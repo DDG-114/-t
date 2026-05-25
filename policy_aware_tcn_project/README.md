@@ -5,7 +5,8 @@ This directory is the standalone deep-model project separated from the LightGBM 
 It implements the report2 recommendation:
 
 ```text
-compact TCN + business-aligned loss + year/policy-aware post-processing
+supply-demand prior price model + compact TCN residual correction
++ business-aligned loss + year/policy-aware post-processing
 ```
 
 The baseline project remains in:
@@ -24,11 +25,15 @@ This project lives in:
 
 The implemented model is `PolicyAwareTCN`:
 
+- supply-demand prior: a train-split-only piecewise-linear Ridge model maps
+  market covariates such as net load, bidding space, renewable share, and
+  supply-demand margin to `sd_prior_price`;
 - historical branch: previous 14 days, `14 x 96 = 1344` time steps;
 - future branch: target-day known covariates for all 96 delivery slots;
 - static policy branch: `policy_regime`, `price_lower_bound`, `price_upper_bound`, `is_zero_floor_regime`;
 - TCN backbone: causal dilated residual blocks with dilation `[1, 2, 4, 8, 16, 32]`;
-- head: direct 96-step residual price prediction over yesterday's same-slot anchor;
+- head: direct 96-step residual price prediction over the supply-demand prior
+  price anchor;
 - uncertainty: optional `log_sigma` head for heteroscedastic auxiliary loss.
 
 Default parameter count is about 201k after missing-indicator channels are appended.
@@ -83,6 +88,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../dayahead_epf_agent_project/.venv/bin/python 
 ```text
 outputs/models/policy_aware_tcn.pt
 outputs/models/policy_aware_tcn_report.json
+outputs/models/supply_demand_prior.pkl
+outputs/models/supply_demand_prior_report.json
 outputs/predictions/policy_aware_tcn_predictions.csv
 outputs/reports/policy_aware_tcn_summary.json
 outputs/predictions/policy_aware_tcn_future_24h_predictions.csv
