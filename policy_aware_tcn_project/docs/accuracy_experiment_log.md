@@ -34,6 +34,24 @@ The fixed test period is 2025-12-01 through 2025-12-31 unless noted otherwise.
 This confirms that prioritizing 2025 data improves recency alignment on 2025-11,
 but it does not by itself solve the 2025-12 high-price regime shift.
 
+## Literature-Inspired Net Bidding Space Diagnostic
+
+A related EPF idea is to predict day-ahead clearing prices with net spot bidding
+space after accounting for medium/long-term market effects. The local dataset
+contains `竞价空间`, but it does not contain the contract/locked-energy fields
+needed to compute true net spot bidding space. A leakage-safe proxy was tested:
+
+```text
+net_bidding_space_proxy = 竞价空间 - alpha * 统一负荷预测
+```
+
+where `alpha` was estimated from historical same-slot floor/high/cap persistence.
+With 2025-priority training, this proxy reached only about `0.7559` test
+accuracy, below the `0.7606` 2025-priority baseline and below the current best.
+
+The result suggests that true medium/long-term contract data or official net
+spot bidding-space data is needed; a price-history proxy is not sufficient.
+
 ## 2025 Rolling-Week Diagnostic
 
 - Train/validation/test were rolled by week inside 2025.
@@ -50,6 +68,10 @@ low-price slots. It is not adopted as the default path.
     lift suspected scarcity slots.
   - Test accuracy improved only from `0.7605732816532624` to about `0.7639`.
   - Result: useful diagnostic, but still lower than the current best.
+- 2025-priority prediction-bin calibration:
+  - Validation-selected threshold calibration improved 2025-11 slightly.
+  - Test accuracy decreased to about `0.7587`.
+  - Result: 2025-11 calibration relationships do not transfer to 2025-12.
 - Scarcity rolling-state features:
   - Config: `config/residual_calibrator_scarcity_q2.yaml`
   - Residual-calibrated test accuracy: `0.7472349106265357`
