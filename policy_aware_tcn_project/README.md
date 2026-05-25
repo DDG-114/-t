@@ -208,6 +208,16 @@ the 85% target:
   --predictions outputs/online_residual_best/predictions/online_residual_best_predictions.csv
 ```
 
+Online residual parameters can be re-selected on a validation window, but this
+has not beaten the current hand-selected online best on 2025-12:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/16_tune_online_residual_calibrator.py \
+  --config config/online_residual_best.yaml \
+  --predictions outputs/residual_calibrated_train2024q2/predictions/gbm_residual_anchor_all_predictions.csv \
+  --prefix online_residual_tuned_valid100
+```
+
 GBM is now archived as the strongest classical baseline; see
 `docs/gbm_archive.md`. The active deep-learning route can use GPU training with
 weather and weather-error features:

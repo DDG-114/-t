@@ -324,3 +324,13 @@ information-disclosure mechanisms. The codebase now includes
 `scripts/15_audit_external_signal_file.py` to verify a supplied external CSV
 before feature merging. In the current workspace, `data/external/scarcity_signals.csv`
 is missing, so the external-signal route cannot yet be trained or evaluated.
+
+## Validation-Selected Online Residual Tuning
+
+Added `scripts/16_tune_online_residual_calibrator.py` to select online residual
+parameters on 2025-10 through 2025-11 and evaluate the selected configuration
+on fixed 2025-12. A 100-candidate run selected a conservative global residual
+config with validation accuracy `0.818310971115351`, but its 2025-12 accuracy
+was only `0.7758869665543694`, below the current hand-selected online best
+`0.7857284442214671`. This confirms that the 2025-10/11 residual relationship
+does not transfer strongly enough to solve the December gap.
