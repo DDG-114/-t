@@ -74,6 +74,47 @@ anchor predicts only `7`, and the raw deep residual model predicts only `6`.
 The route is useful as a safe deep-learning scaffold, but it has not solved the
 high/cap boundary bottleneck.
 
+## Spike-Aware Online Diagnostics
+
+Electricity-price forecasting literature commonly treats price spikes as a
+separate regime rather than as ordinary regression noise: review papers by Weron
+and later EPF surveys discuss variance-stabilizing transforms, regime-switching
+models, and separate spike handling; more recent deep EPF work often combines
+sequence models with exogenous variables and rolling/online adaptation. The
+local experiments below follow that direction but keep the no-leakage day-ahead
+contract.
+
+- Added `online_residual_calibrator.spike_residual` as an optional online
+  residual branch for high/cap-probability slots. It can group recent residuals
+  by state, spike-state, prediction bin, or hour and use a configurable residual
+  quantile.
+- Default spike branch:
+  ```bash
+  ../dayahead_epf_agent_project/.venv/bin/python scripts/10_apply_online_residual_calibrator.py \
+    --config config/online_residual_spike.yaml \
+    --predictions outputs/residual_calibrated_train2024q2/predictions/state_gbm_residual_predictions.csv \
+    --prefix online_residual_spike
+  ```
+  reached test accuracy `0.7848057383085196`, below the current online best.
+- Manual validation/test diagnostics found some test-only gains from stronger
+  spike residuals, for example hour-grouped high-probability residuals reached
+  about `0.7882` on 2025-12, but their 2025-10/11 validation accuracy fell
+  materially. Because the validation relationship does not transfer, this is not
+  adopted as the selected result.
+- A test-only upper-bound diagnostic using existing scores showed that fixed
+  high-price lifting based on `high_probability`, `cap_probability`, or
+  `y_pred` can only reach about `0.7884`. If the true high-price mask
+  (`y_true >= 500`) were known but high slots were set to a constant price, the
+  score would be about `0.8174`; if high slots were perfectly predicted, the
+  score would be about `0.8484`.
+
+Result: the current feature set has enough information to rank high-price slots
+roughly, but not enough to estimate their magnitude accurately. Reaching `0.85`
+is unlikely from threshold lifting or online residual tuning alone; it likely
+requires a stronger high-price magnitude signal such as actual/forecast reserve
+margin, outage/maintenance, available capacity, real-time load/renewable error,
+or official scarcity/market disclosure features.
+
 ## 2025-Priority Experiment
 
 - Config: `config/residual_calibrator_2025_priority.yaml`
