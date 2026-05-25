@@ -21,7 +21,7 @@ This project lives in:
 /home/kaga/Desktop/datang/policy_aware_tcn_project
 ```
 
-## Model
+## Models
 
 The implemented model is `PolicyAwareTCN`:
 
@@ -41,6 +41,15 @@ The implemented model is `PolicyAwareTCN`:
 - uncertainty: optional `log_sigma` head for heteroscedastic auxiliary loss.
 
 Default parameter count is about 201k after missing-indicator channels are appended.
+
+The project also includes `state_gbm`, a stronger state-aware LightGBM baseline:
+
+- adds day-ahead-safe boundary-state history features for floor/high/cap prices;
+- trains a weighted MAE LightGBM regressor;
+- trains separate floor-price, high-price, and cap-price classifiers;
+- selects state override thresholds on the validation split;
+- refits the final model through the validation end before evaluating the test
+  split, following the rolling-calibration style used in EPF literature.
 
 ## Loss
 
@@ -75,6 +84,12 @@ cd /home/kaga/Desktop/datang/policy_aware_tcn_project
 ../dayahead_epf_agent_project/.venv/bin/python scripts/03_evaluate_policy_tcn.py --config config/default.yaml
 ```
 
+Train and evaluate the state-aware GBM:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/04_train_evaluate_state_gbm.py --config config/default.yaml
+```
+
 Rebuild features if needed:
 
 ```bash
@@ -100,8 +115,39 @@ outputs/predictions/policy_aware_tcn_future_24h_predictions.csv
 outputs/reports/policy_aware_tcn_future_24h_summary.json
 ```
 
+State-aware GBM outputs:
+
+```text
+outputs/models/state_gbm.pkl
+outputs/models/state_gbm_report.json
+outputs/predictions/state_gbm_predictions.csv
+outputs/reports/state_gbm_summary.json
+```
+
 The quantile features are leakage-safe proxies because the current raw dataset
 contains fundamental point forecasts but not the realized load/renewable series
 needed to postprocess forecast errors. If realized fundamentals become available,
 this module can be upgraded to the QR/HS probabilistic-input route described in
 the literature.
+
+## Current Accuracy Ceiling
+
+On the December 2025 test split, the strongest verified internal-data model so
+far is the state-aware GBM without proxy quantile features:
+
+```text
+accuracy: 0.7444
+MAE: 78.18
+RMSE: 157.58
+cap_normalized_accuracy: 0.9218
+```
+
+The main remaining bottleneck is the high-price boundary. A diagnostic oracle
+showed that perfect floor-state correction would lift accuracy to about 0.82,
+while perfect floor plus perfect 900+ cap-state correction would be needed to
+reach about 0.85. With the current dataset, the cap-state classifier remains
+weak because the raw data contains fundamental forecasts but not realized
+fundamental observations or weather forecast errors. To credibly target 85%,
+the next data priority is to add realized load/renewable/generation series or
+weather forecasts so cap-price scarcity states can be identified before the
+delivery day.
