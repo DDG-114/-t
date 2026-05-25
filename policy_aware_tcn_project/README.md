@@ -28,6 +28,10 @@ The implemented model is `PolicyAwareTCN`:
 - supply-demand prior: a train-split-only piecewise-linear Ridge model maps
   market covariates such as net load, bidding space, renewable share, and
   supply-demand margin to `sd_prior_price`;
+- fundamental uncertainty features: same-slot rolling quantile proxies
+  (`q10/q50/q90` and spreads) are constructed for load, renewable, bidding,
+  generation, tie-line, residual-load, and supply-margin variables using only
+  previous days, then used by both the prior model and the TCN future branch;
 - historical branch: previous 14 days, `14 x 96 = 1344` time steps;
 - future branch: target-day known covariates for all 96 delivery slots;
 - static policy branch: `policy_regime`, `price_lower_bound`, `price_upper_bound`, `is_zero_floor_regime`;
@@ -95,3 +99,9 @@ outputs/reports/policy_aware_tcn_summary.json
 outputs/predictions/policy_aware_tcn_future_24h_predictions.csv
 outputs/reports/policy_aware_tcn_future_24h_summary.json
 ```
+
+The quantile features are leakage-safe proxies because the current raw dataset
+contains fundamental point forecasts but not the realized load/renewable series
+needed to postprocess forecast errors. If realized fundamentals become available,
+this module can be upgraded to the QR/HS probabilistic-input route described in
+the literature.

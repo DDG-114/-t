@@ -82,6 +82,103 @@ def add_rolling_price_features(
     return result.sort_values(["date", "slot"]).reset_index(drop=True)
 
 
+def _quantile_label(level: float) -> str:
+    scaled = float(level) * 100
+    if abs(scaled - round(scaled)) < 1e-9:
+        return f"q{int(round(scaled)):02d}"
+    return f"q{int(round(float(level) * 1000)):03d}"
+
+
+def add_exogenous_quantile_features(
+    df: pd.DataFrame,
+    source_cols: List[str],
+    windows: List[int],
+    quantile_levels: List[float],
+    include_spreads: bool = True,
+    include_derived: bool = True,
+) -> pd.DataFrame:
+    """Add same-slot historical quantile proxies for fundamental forecasts.
+
+    The bundled dataset contains point forecasts for fundamental variables, but
+    not the realized load/renewable observations needed for true forecast-error
+    quantile postprocessing. These features therefore use only previous same-slot
+    forecast distributions as a leakage-safe proxy for fundamental uncertainty.
+    """
+    result = df.sort_values(["slot", "date"]).copy()
+    existing_cols = [
+        col
+        for col in source_cols
+        if col in result.columns and pd.api.types.is_numeric_dtype(result[col])
+    ]
+    levels = sorted({float(level) for level in quantile_levels})
+    labels = {level: _quantile_label(level) for level in levels}
+
+    for col in existing_cols:
+        shifted = result.groupby("slot", group_keys=False)[col].shift(1)
+        for window in windows:
+            rolled = shifted.groupby(result["slot"], group_keys=False).rolling(int(window))
+            for level in levels:
+                label = labels[level]
+                result[f"{col}_{label}_{int(window)}d"] = (
+                    rolled.quantile(level).reset_index(level=0, drop=True)
+                )
+            if include_spreads and 0.1 in labels and 0.9 in labels:
+                low = f"{col}_{labels[0.1]}_{int(window)}d"
+                high = f"{col}_{labels[0.9]}_{int(window)}d"
+                if low in result.columns and high in result.columns:
+                    result[f"{col}_iqr_{int(window)}d"] = result[high] - result[low]
+
+    if include_derived:
+        result = add_derived_quantile_features(
+            result,
+            windows=windows,
+            quantile_levels=levels,
+            labels=labels,
+        )
+
+    return result.sort_values(["date", "slot"]).reset_index(drop=True)
+
+
+def add_derived_quantile_features(
+    df: pd.DataFrame,
+    windows: List[int],
+    quantile_levels: List[float],
+    labels: Dict[float, str],
+) -> pd.DataFrame:
+    """Add residual-load and supply-margin quantile proxy features."""
+    result = df.copy()
+    load_col = "统一负荷预测"
+    renewable_col = "统一新能源预测"
+    generation_col = "发电总出力预测"
+
+    for window in windows:
+        window = int(window)
+        for level in quantile_levels:
+            label = labels[level]
+            inverse_label = labels.get(round(1.0 - level, 10))
+
+            if inverse_label:
+                load_q = f"{load_col}_{label}_{window}d"
+                renewable_inv_q = f"{renewable_col}_{inverse_label}_{window}d"
+                generation_q = f"{generation_col}_{label}_{window}d"
+                load_inv_q = f"{load_col}_{inverse_label}_{window}d"
+
+                if load_q in result.columns and renewable_inv_q in result.columns:
+                    result[f"净负荷_{label}_{window}d"] = result[load_q] - result[renewable_inv_q]
+                if generation_q in result.columns and load_inv_q in result.columns:
+                    result[f"供需裕度_{label}_{window}d"] = result[generation_q] - result[load_inv_q]
+
+        q10 = labels.get(0.1)
+        q90 = labels.get(0.9)
+        if q10 and q90:
+            for base in ["净负荷", "供需裕度"]:
+                low = f"{base}_{q10}_{window}d"
+                high = f"{base}_{q90}_{window}d"
+                if low in result.columns and high in result.columns:
+                    result[f"{base}_iqr_{window}d"] = result[high] - result[low]
+    return result
+
+
 def add_floor_price_features(
     df: pd.DataFrame,
     target_col: str,
@@ -154,6 +251,26 @@ def build_features(df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
 
     if config["features"].get("include_cyclic_slot_features", True):
         result = add_cyclic_features(result, expected_slots=expected_slots)
+
+    if config["features"].get("include_exogenous_quantile_features", False):
+        result = add_exogenous_quantile_features(
+            result,
+            source_cols=config["features"].get(
+                "exogenous_quantile_source_columns",
+                config["columns"].get("exogenous", []),
+            ),
+            windows=config["features"].get("exogenous_quantile_windows_days", [7, 14, 28]),
+            quantile_levels=config["features"].get(
+                "exogenous_quantile_levels",
+                [0.1, 0.5, 0.9],
+            ),
+            include_spreads=bool(
+                config["features"].get("include_exogenous_quantile_spreads", True)
+            ),
+            include_derived=bool(
+                config["features"].get("include_derived_quantile_features", True)
+            ),
+        )
 
     result = add_price_lag_features(
         result,

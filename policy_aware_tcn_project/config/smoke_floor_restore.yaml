@@ -51,6 +51,24 @@ features:
   - 3
   - 7
   long_floor_run_slots: 16
+  include_exogenous_quantile_features: true
+  exogenous_quantile_source_columns:
+  - 发电总出力预测
+  - 竞价空间
+  - 统一负荷预测
+  - 抽蓄
+  - 统一新能源预测
+  - 联络线计划
+  exogenous_quantile_windows_days:
+  - 7
+  - 14
+  - 28
+  exogenous_quantile_levels:
+  - 0.1
+  - 0.5
+  - 0.9
+  include_exogenous_quantile_spreads: true
+  include_derived_quantile_features: true
   include_calendar_features: true
   include_cyclic_slot_features: true
 metrics:
@@ -97,6 +115,7 @@ deep_model:
     low_price_weight_boost: 0.4
     cap_price_weight_boost: 0.6
     floor_weight_boost: 0.4
+    include_quantile_features: true
   add_missing_indicators: true
   min_target_slots: 1
   default_policy_regime: 0.0

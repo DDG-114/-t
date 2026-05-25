@@ -37,6 +37,14 @@ DEFAULT_FEATURE_COLS = [
     "month_sin",
     "month_cos",
 ]
+DEFAULT_QUANTILE_PREFIXES = [
+    "统一负荷预测_",
+    "统一新能源预测_",
+    "净负荷_",
+    "供需裕度_",
+    "竞价空间_",
+    "竞价空间占比_",
+]
 DEFAULT_HINGE_COLS = [
     "净负荷",
     "供需裕度",
@@ -253,6 +261,16 @@ def row_policy_bounds(
 def _configured_feature_cols(frame: pd.DataFrame, prior_cfg: Dict[str, Any]) -> List[str]:
     configured = prior_cfg.get("feature_cols")
     candidates = list(configured) if configured else DEFAULT_FEATURE_COLS
+    if configured is None and bool(prior_cfg.get("include_quantile_features", True)):
+        candidates = [
+            *candidates,
+            *[
+                col
+                for col in frame.columns
+                if any(col.startswith(prefix) for prefix in DEFAULT_QUANTILE_PREFIXES)
+                and ("_q" in col or "_iqr_" in col)
+            ],
+        ]
     return [
         col
         for col in candidates
@@ -365,4 +383,3 @@ def _regression_metrics(
         "rmse": rmse,
         "accuracy": float(1.0 - np.mean(rel)),
     }
-

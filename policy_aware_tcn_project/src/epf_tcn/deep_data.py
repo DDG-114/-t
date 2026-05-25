@@ -102,6 +102,17 @@ MARKET_DERIVED_COLS = [
     "联络线占比",
 ]
 
+QUANTILE_CONTEXT_PREFIXES = [
+    "发电总出力预测_",
+    "竞价空间_",
+    "统一负荷预测_",
+    "抽蓄_",
+    "统一新能源预测_",
+    "联络线计划_",
+    "净负荷_",
+    "供需裕度_",
+]
+
 TIME_COLS = [
     "slot",
     "hour",
@@ -164,14 +175,27 @@ def infer_deep_feature_spec(df: pd.DataFrame, config: Dict[str, Any]) -> DeepFea
         or col in {"is_floor_price", "floor_run_slots", "prev_long_floor_run"}
     ]
     market_cols = _existing_numeric_columns(df, MARKET_DERIVED_COLS)
+    quantile_cols = _existing_numeric_columns(
+        df,
+        [
+            col
+            for col in df.columns
+            if any(col.startswith(prefix) for prefix in QUANTILE_CONTEXT_PREFIXES)
+            and ("_q" in col or "_iqr_" in col)
+        ],
+    )
     time_cols = _existing_numeric_columns(df, TIME_COLS)
     exog_cols = _existing_numeric_columns(df, exogenous)
     context_cols = _existing_numeric_columns(df, price_context)
     hist_context_cols = context_cols
     fut_context_cols = [col for col in context_cols if col not in FUTURE_EXCLUDED_COLS]
 
-    hist_cols = _dedupe([target, *exog_cols, *market_cols, *time_cols, *hist_context_cols])
-    fut_cols = _dedupe([*exog_cols, *market_cols, *time_cols, *fut_context_cols])
+    hist_cols = _dedupe(
+        [target, *exog_cols, *market_cols, *quantile_cols, *time_cols, *hist_context_cols]
+    )
+    fut_cols = _dedupe(
+        [*exog_cols, *market_cols, *quantile_cols, *time_cols, *fut_context_cols]
+    )
     return DeepFeatureSpec(hist_cols=hist_cols, fut_cols=fut_cols, static_cols=STATIC_COLS)
 
 

@@ -72,6 +72,10 @@ def _frame(start="2025-01-01", days=5):
                     "floor_ratio_1d": 0.25,
                     "floor_ratio_3d": 0.50,
                     "floor_ratio_7d": 0.75,
+                    "统一负荷预测_q50_7d": 1000.0 + day,
+                    "统一新能源预测_q90_7d": 120.0 + slot,
+                    "净负荷_q90_7d": 930.0 + day,
+                    "净负荷_iqr_7d": 30.0,
                 }
             )
     return pd.DataFrame(rows)
@@ -147,6 +151,10 @@ def test_future_feature_spec_excludes_target_day_floor_leakage_columns():
     assert "floor_ratio_1d" in spec.fut_cols
     assert "floor_ratio_3d" in spec.fut_cols
     assert "floor_ratio_7d" in spec.fut_cols
+    assert "统一负荷预测_q50_7d" in spec.fut_cols
+    assert "统一新能源预测_q90_7d" in spec.fut_cols
+    assert "净负荷_q90_7d" in spec.fut_cols
+    assert "净负荷_iqr_7d" in spec.fut_cols
     assert "is_floor_price" not in spec.fut_cols
     assert "floor_run_slots" not in spec.fut_cols
     assert "prev_floor_run_slots" not in spec.fut_cols
