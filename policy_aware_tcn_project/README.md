@@ -90,6 +90,16 @@ Train and evaluate the state-aware GBM:
 ../dayahead_epf_agent_project/.venv/bin/python scripts/04_train_evaluate_state_gbm.py --config config/default.yaml
 ```
 
+Build an optional weather-augmented feature table from Open-Meteo historical
+forecast runs:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/07_build_weather_features.py \
+  --config config/default.yaml \
+  --input-features data/processed/features.csv \
+  --output-features outputs/weather_experiment/features_weather.csv
+```
+
 Rebuild features if needed:
 
 ```bash
@@ -124,6 +134,9 @@ outputs/predictions/state_gbm_predictions.csv
 outputs/reports/state_gbm_summary.json
 ```
 
+Weather-enhanced experiments use the same state-aware GBM script after pointing
+`paths.processed_features` at the weather-augmented feature CSV.
+
 The quantile features are leakage-safe proxies because the current raw dataset
 contains fundamental point forecasts but not the realized load/renewable series
 needed to postprocess forecast errors. If realized fundamentals become available,
@@ -133,14 +146,19 @@ the literature.
 ## Current Accuracy Ceiling
 
 On the December 2025 test split, the strongest verified internal-data model so
-far is the state-aware GBM without proxy quantile features:
+far is the weather-augmented state-aware GBM without proxy quantile features:
 
 ```text
-accuracy: 0.7444
-MAE: 78.18
-RMSE: 157.58
+accuracy: 0.7498
+MAE: 78.24
+RMSE: 159.36
 cap_normalized_accuracy: 0.9218
 ```
+
+Without weather, the same state-aware GBM reached `accuracy=0.7444`. The
+weather experiment used Open-Meteo `previous_day1/2/3` forecast-run features
+for Shaanxi representative cities and improved the high/cap-state classifier
+slightly, but not enough to close the 85% gap.
 
 The main remaining bottleneck is the high-price boundary. A diagnostic oracle
 showed that perfect floor-state correction would lift accuracy to about 0.82,

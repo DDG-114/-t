@@ -78,6 +78,49 @@ metrics:
 forecast:
   target_date: '2026-04-28'
   output_prefix: policy_aware_tcn_future_24h
+weather:
+  enabled: false
+  provider: open_meteo_previous_runs
+  cache_dir: outputs/weather_cache
+  timezone: Asia/Shanghai
+  request_timeout_seconds: 30
+  skip_failed_stations: true
+  forecast_leads_days:
+  - 1
+  - 2
+  - 3
+  variables:
+  - temperature_2m
+  - wind_speed_10m
+  - shortwave_radiation
+  - cloud_cover
+  - precipitation
+  - relative_humidity_2m
+  stations:
+  - name: xian
+    latitude: 34.34
+    longitude: 108.94
+  - name: yulin
+    latitude: 38.29
+    longitude: 109.73
+  - name: yanan
+    latitude: 36.59
+    longitude: 109.49
+  - name: baoji
+    latitude: 34.36
+    longitude: 107.24
+  - name: hanzhong
+    latitude: 33.07
+    longitude: 107.02
+  - name: ankang
+    latitude: 32.68
+    longitude: 109.03
+  - name: weinan
+    latitude: 34.50
+    longitude: 109.51
+  - name: xianyang
+    latitude: 34.33
+    longitude: 108.71
 deep_model:
   type: policy_aware_tcn
   seed: 42
