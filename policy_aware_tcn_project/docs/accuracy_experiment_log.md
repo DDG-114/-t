@@ -301,3 +301,15 @@ best next improvement likely requires new leakage-safe external signals that
 describe realized or forecast scarcity more directly, such as actual load,
 renewable output, available capacity, reserve margin, outage/maintenance, or
 official market disclosure data.
+
+The current online residual best has `mean_relative_error=0.21427`; reaching
+85% accuracy requires reducing this to `0.15`, a gap of about `0.06427`.
+The largest remaining error share is not only the 800+ cap region: true
+`200-500` yuan slots contribute about `42.2%` of total relative error, while
+`500-800` and `800+` contribute about `12.0%` and `14.0%`. The worst hours are
+morning and evening scarcity periods, especially hours 7-8, 0-1, and 17-22.
+This supports focusing on scarcity-state features and mid/high-price magnitude,
+not just cap-price classification.
+
+`scripts/14_analyze_accuracy_gap.py` reproduces this gap analysis for any
+candidate prediction file.

@@ -197,6 +197,14 @@ ranking before running a full training cycle:
   --top-k 120
 ```
 
+Use the gap analyzer to inspect where a candidate prediction file still misses
+the 85% target:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/14_analyze_accuracy_gap.py \
+  --predictions outputs/online_residual_best/predictions/online_residual_best_predictions.csv
+```
+
 GBM is now archived as the strongest classical baseline; see
 `docs/gbm_archive.md`. The active deep-learning route can use GPU training with
 weather and weather-error features:
