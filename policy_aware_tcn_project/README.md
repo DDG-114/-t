@@ -185,6 +185,18 @@ put realized load/renewable/generation/reserve-margin columns under
 `lagged_actual_columns`; those are exposed only as previous-day lag and rolling
 features.
 
+After adding new scarcity columns, check whether they actually improve high-price
+ranking before running a full training cycle:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/13_diagnose_high_price_regime.py \
+  --config config/residual_calibrator_weather_error_q2.yaml \
+  --features outputs/external_scarcity/features_external_scarcity.csv \
+  --predictions outputs/residual_calibrated_train2024q2/predictions/gbm_residual_anchor_all_predictions.csv \
+  --target-threshold 500 \
+  --top-k 120
+```
+
 GBM is now archived as the strongest classical baseline; see
 `docs/gbm_archive.md`. The active deep-learning route can use GPU training with
 weather and weather-error features:

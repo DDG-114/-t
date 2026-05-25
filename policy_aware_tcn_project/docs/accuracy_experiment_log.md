@@ -265,6 +265,18 @@ low-price slots. It is not adopted as the default path.
     around `0.7751`, still below the online residual best `0.7857`.
   - Result: existing 2025 features contain some high-price ordering signal, but
     not enough magnitude/gating information to reach 85%.
+- Dynamic online high-probability threshold diagnostic:
+  - Tested recent-history quantile thresholds on `high_probability`,
+    `cap_probability`, their maximum, and `y_pred`, lifting selected slots
+    toward 400-600 yuan using only previous realized days.
+  - On top of the base residual-calibrated model, validation-selected rules
+    improved 2025-12 only from `0.7711041307390922` to about
+    `0.7725372118177601`; test-only best within the representative grid reached
+    about `0.7770261360458348`.
+  - On top of the current online residual best, representative dynamic rules
+    reached about `0.7877240483219137`, only `+0.0020` over the current best.
+  - Result: recent-history threshold adaptation is a small possible
+    postprocessor, but it is not a route to 85%.
 
 ## External Scarcity Signal Pipeline
 
@@ -276,6 +288,9 @@ reserve margin are only exposed as previous-day lags and rolling statistics, so
 the feature table remains leakage-safe.
 `scripts/12_add_external_signals.py` can merge these columns into an existing
 weather/previous-day-curve feature table once the external CSV is available.
+`scripts/13_diagnose_high_price_regime.py` checks whether a feature table can
+rank `Price >= 500` or `Price >= 800` slots well enough to justify a full
+training run.
 
 ## Main Bottleneck
 
