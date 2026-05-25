@@ -141,6 +141,16 @@ A residual calibration layer can be trained after the state-aware GBM:
   --config config/residual_calibrator_weather_error_q2.yaml
 ```
 
+For sequential backtests where earlier realized days in the test month are
+available, apply the leakage-safe online residual calibrator:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/10_apply_online_residual_calibrator.py \
+  --config config/online_residual_best.yaml \
+  --predictions outputs/residual_calibrated_train2024q2/predictions/state_gbm_residual_predictions.csv \
+  --prefix online_residual_best
+```
+
 Weather-enhanced experiments use the same state-aware GBM script after pointing
 `paths.processed_features` at the weather-augmented feature CSV.
 Lagged weather forecast-error features can be added on top of that table:
@@ -162,25 +172,30 @@ the literature.
 
 ## Current Accuracy Ceiling
 
-On the December 2025 test split, the strongest verified internal-data model so
-far is the state-aware GBM with Open-Meteo forecast features, lagged weather
-forecast-error history, and a validation-selected residual calibration layer,
-trained from 2024-04-01:
+On the December 2025 test split, the strongest verified internal-data result so
+far is the residual-calibrated state-aware GBM plus online residual adaptation.
+The online layer uses only earlier realized days in the December 2025 sequence:
 
 ```text
-accuracy: 0.7711
-MAE: 90.01
-RMSE: 177.03
-cap_normalized_accuracy: 0.9100
+accuracy: 0.7819
+MAE: 80.48
+RMSE: 165.54
+cap_normalized_accuracy: 0.9195
 ```
+
+The strongest pre-online base model is the state-aware GBM with Open-Meteo
+forecast features, lagged weather forecast-error history, and a
+validation-selected residual calibration layer, trained from 2024-04-01:
+`accuracy=0.7711`, `MAE=90.01`, `RMSE=177.03`.
 
 Without weather, the same state-aware GBM reached `accuracy=0.7444`. Weather
 forecast-run features reached `accuracy=0.7498`, and extending the training
 window to start at 2024-04-01 reached `accuracy=0.7654`. Adding lagged weather
 forecast-error history lifted the verified result to `accuracy=0.7692`, mainly
 by raising predictions in the 150+ price regions. A residual calibration layer
-selected on the validation split lifted the result to `accuracy=0.7711`. It
-still does not close the 85% gap.
+selected on the validation split lifted the result to `accuracy=0.7711`. Online
+residual adaptation lifted it further to `accuracy=0.7819`. It still does not
+close the 85% gap.
 
 The main remaining bottleneck is the high-price boundary. A diagnostic oracle
 showed that perfect floor-state correction would lift accuracy to about 0.82,

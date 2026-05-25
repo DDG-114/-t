@@ -10,17 +10,30 @@ The fixed test period is 2025-12-01 through 2025-12-31 unless noted otherwise.
 
 ## Current Best Reproducible Test Result
 
-- Config: `config/residual_calibrator_weather_error_q2.yaml`
+- Config: `config/online_residual_best.yaml`
 - Command:
   ```bash
-  ../dayahead_epf_agent_project/.venv/bin/python scripts/09_train_evaluate_residual_calibrator.py \
-    --config config/residual_calibrator_weather_error_q2.yaml
+  ../dayahead_epf_agent_project/.venv/bin/python scripts/10_apply_online_residual_calibrator.py \
+    --config config/online_residual_best.yaml \
+    --predictions outputs/residual_calibrated_train2024q2/predictions/state_gbm_residual_predictions.csv \
+    --prefix online_residual_best
   ```
+- Output: `outputs/online_residual_best/reports/online_residual_best_summary.json`
+- Test accuracy: `0.7819392493578683`
+- MAE: `80.48272015121162`
+- RMSE: `165.53786971517897`
+- Pass days at 85% daily accuracy: `9 / 31`
+
+The online residual calibrator uses only earlier days inside the 2025-12
+evaluation stream. It corrects each day from the previous seven days of observed
+prediction errors, grouped by prediction bins, so it is compatible with a
+rolling day-ahead deployment where yesterday's realized prices are available.
+
+The best pre-online base model remains:
+
+- Config: `config/residual_calibrator_weather_error_q2.yaml`
 - Output: `outputs/residual_calibrated_train2024q2/reports/state_gbm_residual_summary.json`
 - Test accuracy: `0.7711041307390922`
-- MAE: `90.0057497319963`
-- RMSE: `177.02557964613433`
-- Pass days at 85% daily accuracy: `6 / 31`
 
 ## 2025-Priority Experiment
 
