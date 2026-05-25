@@ -42,6 +42,38 @@ The best pre-online base model remains:
 - Output: `outputs/residual_calibrated_train2024q2/reports/state_gbm_residual_summary.json`
 - Test accuracy: `0.7711041307390922`
 
+## GBM-Anchor Deep Residual Route
+
+After archiving direct GBM tuning, the next deep-learning structure uses the
+residual-calibrated GBM prediction as an external anchor and trains the TCN only
+to adjust that anchor. The anchor rows are generated with:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/11_generate_residual_anchor_predictions.py \
+  --config config/residual_calibrator_weather_error_q2.yaml \
+  --prefix gbm_residual_anchor
+```
+
+- `config/deep_gbm_anchor_residual.yaml`: GPU-trained TCN residual model with
+  validation-selected residual blending and high-price correction. Validation
+  accuracy improved from the anchor's `0.8176921731389057` to
+  `0.8206149944565261`, but the 2025-12 test accuracy dropped to
+  `0.769736984140805`, below the anchor.
+- `config/deep_gbm_anchor_conservative.yaml`: same model, but the residual blend
+  requires at least `0.003` validation accuracy improvement before changing the
+  anchor. It therefore falls back to the GBM-residual anchor and reaches
+  `0.7711041306166069` on the 2025-12 test split.
+- Applying the existing online residual calibrator to the conservative
+  GBM-anchor deep output reaches `0.7857284437537457`, effectively the same as
+  the archived online GBM best.
+
+Result: the deep residual route is now structurally wired and GPU-runnable, but
+the TCN residual itself has not yet improved December 2025 high-price recall.
+On the 2025-12 test split there are `426` true slots at or above `500`; the
+anchor predicts only `7`, and the raw deep residual model predicts only `6`.
+The route is useful as a safe deep-learning scaffold, but it has not solved the
+high/cap boundary bottleneck.
+
 ## 2025-Priority Experiment
 
 - Config: `config/residual_calibrator_2025_priority.yaml`

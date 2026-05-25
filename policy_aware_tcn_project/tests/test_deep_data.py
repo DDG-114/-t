@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from epf_tcn.deep_data import (
+    add_external_anchor_columns,
     build_daily_windows,
     filter_windows_by_date_range,
     fit_window_normalizer,
@@ -177,3 +178,30 @@ def test_deep_feature_spec_can_include_day_ahead_weather_features():
     assert "weather_error_xian_temperature_2m_d1_lag1d" in spec.fut_cols
     assert "weather_actual_xian_temperature_2m" not in spec.hist_cols
     assert "weather_actual_xian_temperature_2m" not in spec.fut_cols
+
+
+def test_external_anchor_column_can_drive_daily_window_anchor(tmp_path):
+    cfg = _config()
+    cfg["deep_model"]["anchor_source"] = "external_column"
+    cfg["deep_model"]["external_anchor"] = {
+        "enabled": True,
+        "prediction_files": [str(tmp_path / "anchor.csv")],
+        "output_col": "gbm_anchor_price",
+        "prediction_col": "y_pred",
+        "copy_columns": ["floor_probability", "high_probability"],
+    }
+    df = _frame(days=5)
+    pred = df[["Date"]].copy()
+    pred["y_pred"] = 500.0 + df["slot"].to_numpy(dtype=float)
+    pred["floor_probability"] = 0.1
+    pred["high_probability"] = 0.2
+    pred.to_csv(tmp_path / "anchor.csv", index=False)
+
+    merged = add_external_anchor_columns(df, cfg)
+    spec = infer_deep_feature_spec(merged, cfg)
+    windows = build_daily_windows(merged, cfg, feature_spec=spec)
+
+    assert "gbm_anchor_price" in spec.fut_cols
+    assert "floor_probability" in spec.fut_cols
+    assert "high_probability" in spec.hist_cols
+    assert windows[0].anchor.tolist() == pytest.approx([500.0, 501.0, 502.0, 503.0])

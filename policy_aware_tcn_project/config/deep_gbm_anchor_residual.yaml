@@ -1,0 +1,282 @@
+paths:
+  raw_data: data/raw/GS.csv
+  processed_features: outputs/weather_error_experiment/features_weather_error.csv
+  model_dir: outputs/deep_gbm_anchor_residual/models
+  prediction_dir: outputs/deep_gbm_anchor_residual/predictions
+  report_dir: outputs/deep_gbm_anchor_residual/reports
+columns:
+  datetime: Date
+  target: Price
+  exogenous:
+  - 发电总出力预测
+  - 竞价空间
+  - 统一负荷预测
+  - 抽蓄
+  - 统一新能源预测
+  - 联络线计划
+data:
+  encoding: utf-8-sig
+  expected_slots_per_day: 96
+  slot_minutes: 15
+  target_cleaning:
+    enabled: true
+    cap_values_as_missing:
+    - 0.0
+    constant_run_exempt_values:
+    - 40.0
+    - 1000.0
+    constant_run_min_length: 672
+split:
+  train_start: '2024-04-01'
+  train_end: '2025-09-30'
+  valid_start: '2025-10-01'
+  valid_end: '2025-11-30'
+  test_start: '2025-12-01'
+  test_end: '2025-12-31'
+features:
+  price_lags_days:
+  - 1
+  - 2
+  - 7
+  - 14
+  rolling_windows_days:
+  - 3
+  - 7
+  - 14
+  include_market_features: true
+  include_floor_features: true
+  floor_price: 40.0
+  floor_run_windows_days:
+  - 1
+  - 3
+  - 7
+  long_floor_run_slots: 16
+  include_exogenous_quantile_features: true
+  exogenous_quantile_source_columns:
+  - 发电总出力预测
+  - 竞价空间
+  - 统一负荷预测
+  - 抽蓄
+  - 统一新能源预测
+  - 联络线计划
+  exogenous_quantile_windows_days:
+  - 7
+  - 14
+  - 28
+  exogenous_quantile_levels:
+  - 0.1
+  - 0.5
+  - 0.9
+  include_exogenous_quantile_spreads: true
+  include_derived_quantile_features: true
+  include_calendar_features: true
+  include_cyclic_slot_features: true
+metrics:
+  price_floor: 40.0
+  price_range: 1000.0
+  daily_accuracy_threshold: 0.85
+forecast:
+  target_date: '2026-04-28'
+  output_prefix: policy_aware_tcn_future_24h
+weather:
+  enabled: false
+  provider: open_meteo_previous_runs
+  cache_dir: outputs/weather_cache
+  timezone: Asia/Shanghai
+  request_timeout_seconds: 30
+  skip_failed_stations: true
+  forecast_leads_days:
+  - 1
+  - 2
+  - 3
+  variables:
+  - temperature_2m
+  - wind_speed_10m
+  - shortwave_radiation
+  - cloud_cover
+  - precipitation
+  - relative_humidity_2m
+  stations:
+  - name: xian
+    latitude: 34.34
+    longitude: 108.94
+  - name: yulin
+    latitude: 38.29
+    longitude: 109.73
+  - name: yanan
+    latitude: 36.59
+    longitude: 109.49
+  - name: baoji
+    latitude: 34.36
+    longitude: 107.24
+  - name: hanzhong
+    latitude: 33.07
+    longitude: 107.02
+  - name: ankang
+    latitude: 32.68
+    longitude: 109.03
+  - name: weinan
+    latitude: 34.50
+    longitude: 109.51
+  - name: xianyang
+    latitude: 34.33
+    longitude: 108.71
+deep_model:
+  type: policy_aware_tcn
+  seed: 42
+  history_days: 14
+  horizon: 96
+  batch_size: 16
+  epochs: 140
+  patience: 30
+  min_delta: 0.0001
+  selection_metric: weighted_accuracy
+  learning_rate: 0.00035
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  lambda_ramp: 0.05
+  nll_weight: 0.02
+  high_price_weight_boost: 1.5
+  low_price_weight_boost: 0.25
+  cap_price_weight_boost: 3.0
+  floor_weight_boost: 0.15
+  floor_run_weight_boost: 0.0
+  floor_overprediction_weight: 0.0
+  anchor_source: external_column
+  external_anchor:
+    enabled: true
+    prediction_files:
+    - outputs/residual_calibrated_train2024q2/predictions/gbm_residual_anchor_all_predictions.csv
+    output_col: gbm_anchor_price
+    prediction_col: y_pred
+    datetime_col: Date
+    fallback_source: previous_day
+    required: true
+    copy_columns:
+    - base_pred
+    - state_pred
+    - residual_pred
+    - floor_probability
+    - high_probability
+    - cap_probability
+  supply_demand_prior:
+    enabled: false
+  residual_blend_correction:
+    enabled: true
+    selection_metric: overall_accuracy
+    selection_tolerance: 0.0
+    shrink_grid:
+    - 0.0
+    - 0.05
+    - 0.1
+    - 0.2
+    - 0.35
+    - 0.5
+    - 0.75
+    - 1.0
+    clip_grid:
+    - 0.0
+    - 20.0
+    - 40.0
+    - 80.0
+    - 120.0
+    - 200.0
+    - null
+    min_prediction_grid:
+    - 40.0
+    - 80.0
+    - 160.0
+    - 300.0
+    max_floor_probability_grid:
+    - null
+    - 0.2
+    - 0.4
+    - 0.8
+    positive_only_grid:
+    - false
+    - true
+  floor_price_correction:
+    enabled: false
+  add_missing_indicators: true
+  min_target_slots: 1
+  default_policy_regime: 0.0
+  policy_regime_by_year:
+    2025: 0.0
+    2026: 1.0
+  year_bounds:
+    2025:
+      min: 40.0
+      max: 1000.0
+    2026:
+      min: 0.0
+      max: 1000.0
+  synthetic_zero_floor:
+    enabled: false
+  tcn:
+    channels: 96
+    kernel_size: 3
+    dilations:
+    - 1
+    - 2
+    - 4
+    - 8
+    - 16
+    - 32
+    dropout: 0.10
+    future_layers: 2
+    static_hidden: 32
+    residual_scale: 260.0
+    history_context_mode: last
+    output_mode: residual
+    direct_output_scale: 1000.0
+    output_sigma: true
+  device: cuda
+  selection_high_price_weight_boost: 1.5
+  selection_cap_price_weight_boost: 3.0
+  include_weather_features: true
+  weather_feature_prefixes:
+  - weather_
+  - weather_error_
+  high_price_correction:
+    enabled: true
+    positive_sample_weight: 4.0
+    target_threshold_grid:
+    - 500.0
+    - 600.0
+    - 800.0
+    - 900.0
+    probability_threshold_grid:
+    - 0.05
+    - 0.08
+    - 0.1
+    - 0.12
+    - 0.15
+    - 0.18
+    - 0.2
+    - 0.25
+    - 0.3
+    - 0.35
+    - 0.4
+    - 0.5
+    - 0.6
+    - 0.7
+    - 0.8
+    prediction_floor_grid:
+    - 350.0
+    - 400.0
+    - 450.0
+    - 500.0
+    - 550.0
+    - 600.0
+    - 700.0
+    - 800.0
+    max_floor_probability_grid:
+    - null
+    - 0.2
+    - 0.4
+    - 0.6
+    model:
+      max_iter: 500
+      learning_rate: 0.025
+      max_leaf_nodes: 15
+      l2_regularization: 0.1

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 import numpy as np
@@ -118,6 +119,15 @@ WEATHER_CONTEXT_PREFIXES = [
     "weather_error_",
 ]
 
+EXTERNAL_ANCHOR_COPY_COLS = [
+    "base_pred",
+    "state_pred",
+    "residual_pred",
+    "floor_probability",
+    "high_probability",
+    "cap_probability",
+]
+
 TIME_COLS = [
     "slot",
     "hour",
@@ -184,6 +194,7 @@ def infer_deep_feature_spec(df: pd.DataFrame, config: Dict[str, Any]) -> DeepFea
                 and not str(col).startswith("weather_actual_")
             ],
         )
+    external_anchor_cols = _external_anchor_feature_cols(df, config)
     price_context = [
         col
         for col in df.columns
@@ -216,6 +227,7 @@ def infer_deep_feature_spec(df: pd.DataFrame, config: Dict[str, Any]) -> DeepFea
             *market_cols,
             *quantile_cols,
             *weather_cols,
+            *external_anchor_cols,
             *time_cols,
             *hist_context_cols,
         ]
@@ -226,6 +238,7 @@ def infer_deep_feature_spec(df: pd.DataFrame, config: Dict[str, Any]) -> DeepFea
             *market_cols,
             *quantile_cols,
             *weather_cols,
+            *external_anchor_cols,
             *time_cols,
             *fut_context_cols,
         ]
@@ -241,6 +254,95 @@ def _dedupe(values: Sequence[str]) -> List[str]:
             seen.add(value)
             result.append(value)
     return result
+
+
+def external_anchor_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the optional external-anchor configuration."""
+    return dict(config.get("deep_model", {}).get("external_anchor", {}))
+
+
+def external_anchor_output_col(config: Dict[str, Any]) -> str:
+    """Return the configured feature column used as an external price anchor."""
+    return str(external_anchor_config(config).get("output_col", "external_anchor_price"))
+
+
+def _external_anchor_feature_cols(df: pd.DataFrame, config: Dict[str, Any]) -> List[str]:
+    """Return configured external-anchor columns that are available and numeric."""
+    cfg = external_anchor_config(config)
+    if not bool(cfg.get("enabled", False)):
+        return []
+    output_col = str(cfg.get("output_col", "external_anchor_price"))
+    cols = cfg.get("feature_cols")
+    if cols is None:
+        cols = [output_col, *cfg.get("copy_columns", EXTERNAL_ANCHOR_COPY_COLS)]
+    return _existing_numeric_columns(df, _dedupe([str(col) for col in cols]))
+
+
+def add_external_anchor_columns(features: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
+    """Merge external model predictions into the deep-model feature table.
+
+    The merged columns are treated as day-ahead-safe model priors. Missing
+    timestamps are left as NaN so the anchor path can fall back to a configured
+    baseline and the feature normalizer can expose missing indicators.
+    """
+    cfg = external_anchor_config(config)
+    if not bool(cfg.get("enabled", False)):
+        return features
+
+    prediction_files = [Path(path) for path in cfg.get("prediction_files", [])]
+    if not prediction_files:
+        return features
+
+    datetime_col = config["columns"].get("datetime", "Date")
+    source_datetime_col = str(cfg.get("datetime_col", "Date"))
+    source_prediction_col = str(cfg.get("prediction_col", "y_pred"))
+    output_col = str(cfg.get("output_col", "external_anchor_price"))
+    copy_cols = [str(col) for col in cfg.get("copy_columns", EXTERNAL_ANCHOR_COPY_COLS)]
+    required = bool(cfg.get("required", True))
+
+    frames: List[pd.DataFrame] = []
+    for path in prediction_files:
+        if not path.exists():
+            if required:
+                raise FileNotFoundError(f"External anchor prediction file not found: {path}")
+            continue
+        pred = pd.read_csv(path)
+        missing = [
+            col
+            for col in [source_datetime_col, source_prediction_col]
+            if col not in pred.columns
+        ]
+        if missing:
+            raise ValueError(f"External anchor file {path} is missing columns: {missing}")
+
+        available_copy_cols = [col for col in copy_cols if col in pred.columns]
+        keep_cols = _dedupe([source_datetime_col, source_prediction_col, *available_copy_cols])
+        frame = pred[keep_cols].copy()
+        frame["__anchor_datetime"] = pd.to_datetime(frame[source_datetime_col])
+        frame[output_col] = pd.to_numeric(frame[source_prediction_col], errors="coerce")
+        for col in available_copy_cols:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+        frames.append(frame[["__anchor_datetime", output_col, *available_copy_cols]])
+
+    if not frames:
+        return features
+
+    anchors = pd.concat(frames, ignore_index=True)
+    anchors = anchors.sort_values("__anchor_datetime").drop_duplicates(
+        "__anchor_datetime",
+        keep="last",
+    )
+    result = features.copy()
+    result[datetime_col] = pd.to_datetime(result[datetime_col])
+    merge_cols = [col for col in anchors.columns if col != "__anchor_datetime"]
+    result = result.drop(columns=[col for col in merge_cols if col in result.columns])
+    result = result.merge(
+        anchors,
+        left_on=datetime_col,
+        right_on="__anchor_datetime",
+        how="left",
+    )
+    return result.drop(columns=["__anchor_datetime"])
 
 
 def _floor_context_for_block(block: pd.DataFrame) -> np.ndarray:
@@ -437,6 +539,46 @@ def _anchor_for_target_day(
             "supply_demand_prior" if prior_cfg.get("enabled", False) else "previous_day",
         )
     )
+    if anchor_source == "external_column":
+        anchor_col = external_anchor_output_col(config)
+        if anchor_col not in target_group.columns:
+            raise ValueError(
+                f"deep_model.anchor_source=external_column requires feature column: {anchor_col}"
+            )
+        values = target_group[anchor_col].to_numpy(dtype=np.float32)
+        if np.isfinite(values).all():
+            return values
+        fallback_source = str(external_anchor_config(config).get("fallback_source", "previous_day"))
+        fallback = _anchor_from_source(
+            fallback_source,
+            complete_days=complete_days,
+            hist_days=hist_days,
+            target_group=target_group,
+            cfg=cfg,
+            config=config,
+        )
+        return np.where(np.isfinite(values), values, fallback).astype(np.float32)
+    return _anchor_from_source(
+        anchor_source,
+        complete_days=complete_days,
+        hist_days=hist_days,
+        target_group=target_group,
+        cfg=cfg,
+        config=config,
+    )
+
+
+def _anchor_from_source(
+    anchor_source: str,
+    complete_days: Dict[pd.Timestamp, pd.DataFrame],
+    hist_days: Sequence[pd.Timestamp],
+    target_group: pd.DataFrame,
+    cfg: WindowConfig,
+    config: Dict[str, Any],
+) -> np.ndarray:
+    """Return an anchor from one non-external source."""
+    deep_cfg = config.get("deep_model", {})
+    prior_cfg = deep_cfg.get("supply_demand_prior", {})
     if anchor_source == "previous_day":
         previous_day = complete_days[hist_days[-1]]
         return previous_day[cfg.target_col].to_numpy(dtype=np.float32)

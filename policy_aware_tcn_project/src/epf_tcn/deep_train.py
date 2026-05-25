@@ -17,7 +17,9 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from epf_tcn.deep_data import (
     DeepFeatureSpec,
     DailyWindow,
+    add_external_anchor_columns,
     build_daily_windows,
+    external_anchor_config,
     filter_windows_by_date_range,
     fit_window_normalizer,
     infer_deep_feature_spec,
@@ -50,6 +52,7 @@ class DeepTrainingResult:
     valid_predictions: pd.DataFrame
     floor_price_correction: Any | None = None
     high_price_correction: Any | None = None
+    residual_blend_correction: Any | None = None
     supply_demand_prior: SupplyDemandPriorModel | None = None
 
 
@@ -75,6 +78,18 @@ class HighPriceCorrection:
     probability_threshold: float
     prediction_floor: float
     max_floor_probability: float | None
+    report: Dict[str, Any]
+
+
+@dataclass
+class ResidualBlendCorrection:
+    """Validation-selected blend between the external anchor and neural output."""
+
+    shrink: float
+    clip_value: float | None
+    min_prediction: float
+    max_floor_probability: float | None
+    positive_only: bool
     report: Dict[str, Any]
 
 
@@ -440,6 +455,46 @@ def windows_to_prediction_frame(
     return pd.DataFrame(rows)
 
 
+def _attach_external_anchor_prediction_columns(
+    features: pd.DataFrame,
+    frame: pd.DataFrame,
+    config: Dict[str, Any],
+) -> pd.DataFrame:
+    """Attach external-anchor diagnostic columns to a prediction frame."""
+    anchor_cfg = external_anchor_config(config)
+    if not bool(anchor_cfg.get("enabled", False)):
+        return frame
+
+    datetime_col = config["columns"].get("datetime", "Date")
+    cols = [
+        str(col)
+        for col in anchor_cfg.get(
+            "copy_columns",
+            [
+                "base_pred",
+                "state_pred",
+                "residual_pred",
+                "floor_probability",
+                "high_probability",
+                "cap_probability",
+            ],
+        )
+        if col in features.columns
+    ]
+    if not cols:
+        return frame
+
+    key = features[[datetime_col, *cols]].copy()
+    key[datetime_col] = pd.to_datetime(key[datetime_col])
+    result = frame.copy()
+    result["Date"] = pd.to_datetime(result["Date"])
+    result = result.drop(columns=[col for col in cols if col in result.columns])
+    result = result.merge(key, left_on="Date", right_on=datetime_col, how="left")
+    if datetime_col != "Date":
+        result = result.drop(columns=[datetime_col])
+    return result
+
+
 def _floor_classifier_feature_cols(features: pd.DataFrame, config: Dict[str, Any]) -> List[str]:
     """Return day-ahead safe feature columns for floor-price classification."""
     target = config["columns"]["target"]
@@ -684,6 +739,193 @@ def _apply_high_price_correction_to_frame(
     return result
 
 
+def _apply_residual_blend_to_frame(
+    frame: pd.DataFrame,
+    shrink: float,
+    clip_value: float | None,
+    min_prediction: float,
+    max_floor_probability: float | None,
+    positive_only: bool,
+    price_floor: float,
+    price_cap: float,
+) -> pd.DataFrame:
+    """Blend neural residuals back toward the external anchor."""
+    result = frame.copy()
+    if "anchor_price" not in result.columns:
+        raise ValueError("Residual blend correction requires anchor_price in prediction frame.")
+    anchor = result["anchor_price"].to_numpy(dtype=float)
+    pred = result["y_pred"].to_numpy(dtype=float)
+    residual = pred - anchor
+    if clip_value is not None:
+        residual = np.clip(residual, -float(clip_value), float(clip_value))
+    if positive_only:
+        residual = np.maximum(residual, 0.0)
+
+    corrected = anchor.copy()
+    mask = anchor >= float(min_prediction)
+    if max_floor_probability is not None and "floor_probability" in result.columns:
+        mask &= result["floor_probability"].to_numpy(dtype=float) <= float(max_floor_probability)
+    corrected[mask] = anchor[mask] + float(shrink) * residual[mask]
+    result["neural_raw_pred"] = pred
+    result["residual_blend_applied"] = mask.astype(bool)
+    result["y_pred"] = np.clip(corrected, float(price_floor), float(price_cap))
+    result["tcn_residual"] = result["y_pred"].to_numpy(dtype=float) - anchor
+    return result
+
+
+def train_residual_blend_correction(
+    valid_frame: pd.DataFrame,
+    config: Dict[str, Any],
+) -> ResidualBlendCorrection | None:
+    """Select a conservative anchor/neural blend on validation accuracy."""
+    blend_cfg = config.get("deep_model", {}).get("residual_blend_correction", {})
+    if not bool(blend_cfg.get("enabled", False)):
+        return None
+    if "anchor_price" not in valid_frame.columns:
+        return None
+
+    price_floor = float(config.get("metrics", {}).get("price_floor", 40.0))
+    price_cap = float(config.get("model", {}).get("clip_prediction_max", 1000.0))
+    base_frame = valid_frame.copy()
+    base_frame["y_pred"] = base_frame["anchor_price"]
+    base_metric = _price_accuracy_from_frame(base_frame, "y_pred", price_floor)
+
+    shrink_grid = blend_cfg.get("shrink_grid", [0.0, 0.1, 0.25, 0.5, 0.75, 1.0])
+    clip_grid = blend_cfg.get("clip_grid", [0.0, 40.0, 80.0, 160.0, 300.0, None])
+    min_prediction_grid = blend_cfg.get("min_prediction_grid", [40.0])
+    max_floor_probability_grid = blend_cfg.get("max_floor_probability_grid", [None])
+    positive_only_grid = blend_cfg.get("positive_only_grid", [False])
+
+    selection_metric = str(blend_cfg.get("selection_metric", "overall_accuracy"))
+    best: Dict[str, Any] | None = None
+    candidates: List[Dict[str, Any]] = []
+    for shrink in shrink_grid:
+        for clip_value in clip_grid:
+            for min_prediction in min_prediction_grid:
+                for max_floor_probability in max_floor_probability_grid:
+                    for positive_only in positive_only_grid:
+                        corrected = _apply_residual_blend_to_frame(
+                            valid_frame,
+                            shrink=float(shrink),
+                            clip_value=None if clip_value is None else float(clip_value),
+                            min_prediction=float(min_prediction),
+                            max_floor_probability=(
+                                None
+                                if max_floor_probability is None
+                                else float(max_floor_probability)
+                            ),
+                            positive_only=bool(positive_only),
+                            price_floor=price_floor,
+                            price_cap=price_cap,
+                        )
+                        metric = _price_accuracy_from_frame(corrected, "y_pred", price_floor)
+                        changed = int(
+                            np.count_nonzero(
+                                np.abs(
+                                    corrected["y_pred"].to_numpy(dtype=float)
+                                    - corrected["anchor_price"].to_numpy(dtype=float)
+                                )
+                                > 1e-6
+                            )
+                        )
+                        candidate = {
+                            "shrink": float(shrink),
+                            "clip_value": None if clip_value is None else float(clip_value),
+                            "min_prediction": float(min_prediction),
+                            "max_floor_probability": (
+                                None
+                                if max_floor_probability is None
+                                else float(max_floor_probability)
+                            ),
+                            "positive_only": bool(positive_only),
+                            "mean_daily_accuracy": metric["mean_daily_accuracy"],
+                            "daily_accuracy_sum": metric["daily_accuracy_sum"],
+                            "overall_accuracy": metric["overall_accuracy"],
+                            "changed_slots": changed,
+                        }
+                        candidates.append(candidate)
+                        if selection_metric == "mean_daily_accuracy":
+                            key = (candidate["mean_daily_accuracy"], -abs(float(shrink)))
+                            best_key = (
+                                best["mean_daily_accuracy"],
+                                -abs(best["shrink"]),
+                            ) if best is not None else None
+                        elif selection_metric == "overall_accuracy":
+                            key = (candidate["overall_accuracy"], -abs(float(shrink)))
+                            best_key = (
+                                best["overall_accuracy"],
+                                -abs(best["shrink"]),
+                            ) if best is not None else None
+                        else:
+                            raise ValueError(
+                                "Unsupported deep_model.residual_blend_correction.selection_metric: "
+                                f"{selection_metric}"
+                            )
+                        if best is None or key > best_key:
+                            best = candidate
+
+    if best is None:
+        return None
+    tolerance = float(blend_cfg.get("selection_tolerance", 0.0))
+    base_score = float(base_metric[selection_metric])
+    if best[selection_metric] < base_score + tolerance:
+        best = {
+            "shrink": 0.0,
+            "clip_value": 0.0,
+            "min_prediction": 1000.0,
+            "max_floor_probability": 0.0,
+            "positive_only": False,
+            "mean_daily_accuracy": base_metric["mean_daily_accuracy"],
+            "daily_accuracy_sum": base_metric["daily_accuracy_sum"],
+            "overall_accuracy": base_metric["overall_accuracy"],
+            "changed_slots": 0,
+        }
+
+    report = {
+        "enabled": True,
+        "selection_metric": selection_metric,
+        "base_anchor_valid_mean_daily_accuracy": base_metric["mean_daily_accuracy"],
+        "base_anchor_valid_daily_accuracy_sum": base_metric["daily_accuracy_sum"],
+        "base_anchor_valid_overall_accuracy": base_metric["overall_accuracy"],
+        "selected": best,
+        "top_candidates": sorted(
+            candidates,
+            key=lambda item: item["mean_daily_accuracy"],
+            reverse=True,
+        )[:10],
+    }
+    return ResidualBlendCorrection(
+        shrink=float(best["shrink"]),
+        clip_value=None if best["clip_value"] is None else float(best["clip_value"]),
+        min_prediction=float(best["min_prediction"]),
+        max_floor_probability=(
+            None if best["max_floor_probability"] is None else float(best["max_floor_probability"])
+        ),
+        positive_only=bool(best["positive_only"]),
+        report=report,
+    )
+
+
+def apply_residual_blend_correction(
+    frame: pd.DataFrame,
+    config: Dict[str, Any],
+    correction: ResidualBlendCorrection | None,
+) -> pd.DataFrame:
+    """Apply an optional validation-selected residual blend correction."""
+    if correction is None:
+        return frame
+    return _apply_residual_blend_to_frame(
+        frame,
+        shrink=correction.shrink,
+        clip_value=correction.clip_value,
+        min_prediction=correction.min_prediction,
+        max_floor_probability=correction.max_floor_probability,
+        positive_only=correction.positive_only,
+        price_floor=float(config.get("metrics", {}).get("price_floor", 40.0)),
+        price_cap=float(config.get("model", {}).get("clip_prediction_max", 1000.0)),
+    )
+
+
 def train_high_price_correction(
     features: pd.DataFrame,
     config: Dict[str, Any],
@@ -923,6 +1165,7 @@ def train_deep_model(
     if supply_demand_prior_enabled(config):
         supply_demand_prior = fit_supply_demand_prior(features, config)
         features = add_supply_demand_prior_column(features, config, supply_demand_prior)
+    features = add_external_anchor_columns(features, config)
 
     feature_spec, train_windows, valid_windows, _, window_stats = prepare_deep_windows(features, config)
     if not train_windows:
@@ -1023,6 +1266,9 @@ def train_deep_model(
 
     valid_pred = predict_arrays(model, valid_arrays, config, device=device)
     valid_frame = windows_to_prediction_frame(valid_arrays, valid_pred, config)
+    valid_frame = _attach_external_anchor_prediction_columns(features, valid_frame, config)
+    residual_blend = train_residual_blend_correction(valid_frame, config)
+    valid_frame = apply_residual_blend_correction(valid_frame, config, residual_blend)
     floor_correction = train_floor_price_correction(features, config, valid_frame)
     valid_frame = apply_floor_price_correction(features, valid_frame, config, floor_correction)
     high_correction = train_high_price_correction(features, config, valid_frame)
@@ -1059,6 +1305,10 @@ def train_deep_model(
         report["high_price_correction"] = high_correction.report
     else:
         report["high_price_correction"] = {"enabled": False}
+    if residual_blend is not None:
+        report["residual_blend_correction"] = residual_blend.report
+    else:
+        report["residual_blend_correction"] = {"enabled": False}
     if supply_demand_prior is not None:
         report["supply_demand_prior"] = supply_demand_prior.report
     else:
@@ -1071,6 +1321,7 @@ def train_deep_model(
         valid_predictions=valid_frame,
         floor_price_correction=floor_correction,
         high_price_correction=high_correction,
+        residual_blend_correction=residual_blend,
         supply_demand_prior=supply_demand_prior,
     )
 
@@ -1087,6 +1338,9 @@ def save_deep_model(result: DeepTrainingResult, config: Dict[str, Any]) -> None:
     if result.high_price_correction is not None:
         with (model_dir / "high_price_correction.pkl").open("wb") as file:
             pickle.dump(result.high_price_correction, file)
+    if result.residual_blend_correction is not None:
+        with (model_dir / "residual_blend_correction.pkl").open("wb") as file:
+            pickle.dump(result.residual_blend_correction, file)
     with (model_dir / "policy_aware_tcn_report.json").open("w", encoding="utf-8") as file:
         json.dump(result.train_report, file, ensure_ascii=False, indent=2)
 
@@ -1103,6 +1357,15 @@ def load_floor_price_correction(config: Dict[str, Any]) -> FloorPriceCorrection 
 def load_high_price_correction(config: Dict[str, Any]) -> HighPriceCorrection | None:
     """Load the optional high-price correction artifact."""
     path = Path(config["paths"]["model_dir"]) / "high_price_correction.pkl"
+    if not path.exists():
+        return None
+    with path.open("rb") as file:
+        return pickle.load(file)
+
+
+def load_residual_blend_correction(config: Dict[str, Any]) -> ResidualBlendCorrection | None:
+    """Load the optional residual-blend correction artifact."""
+    path = Path(config["paths"]["model_dir"]) / "residual_blend_correction.pkl"
     if not path.exists():
         return None
     with path.open("rb") as file:
@@ -1166,12 +1429,19 @@ def evaluate_trained_deep_model(
     prior = load_supply_demand_prior(config)
     if prior is not None:
         features = add_supply_demand_prior_column(features, config, prior)
+    features = add_external_anchor_columns(features, config)
     windows = build_daily_windows(features, config, feature_spec=feature_spec, require_target=True)
     test_start, test_end = _date_range_days(config, "test")
     test_windows = filter_windows_by_date_range(windows, test_start, test_end)
     arrays = transform_windows(test_windows, normalizer, require_target=True)
     pred = predict_arrays(model, arrays, config)
     frame = windows_to_prediction_frame(arrays, pred, config)
+    frame = _attach_external_anchor_prediction_columns(features, frame, config)
+    frame = apply_residual_blend_correction(
+        frame,
+        config,
+        correction=load_residual_blend_correction(config),
+    )
     frame = apply_floor_price_correction(
         features,
         frame,
@@ -1200,6 +1470,7 @@ def predict_forecast_day(
     prior = load_supply_demand_prior(config)
     if prior is not None:
         features = add_supply_demand_prior_column(features, config, prior)
+    features = add_external_anchor_columns(features, config)
     windows = build_daily_windows(
         features,
         config,
@@ -1212,6 +1483,12 @@ def predict_forecast_day(
     arrays = transform_windows(windows, normalizer, require_target=False)
     pred = predict_arrays(model, arrays, config)
     frame = windows_to_prediction_frame(arrays, pred, config)
+    frame = _attach_external_anchor_prediction_columns(features, frame, config)
+    frame = apply_residual_blend_correction(
+        frame,
+        config,
+        correction=load_residual_blend_correction(config),
+    )
     frame = apply_floor_price_correction(
         features,
         frame,

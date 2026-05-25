@@ -58,3 +58,9 @@ GBM code, configs, and reports remain useful for comparison and ablation, but
 they are no longer the main optimization path. The next route is a GPU-trained
 deep model with weather inputs, supply-demand prior anchoring, and validation
 selected high-price correction.
+
+The first post-archive deep route now uses GBM as an external anchor rather than
+continuing GBM tuning. `config/deep_gbm_anchor_conservative.yaml` trains a TCN
+residual model on GPU and keeps a validation-selected residual blend gate so the
+deep output can fall back to the GBM-residual anchor when the learned residual
+does not clear a small validation-improvement threshold.
