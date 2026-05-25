@@ -136,6 +136,16 @@ outputs/reports/state_gbm_summary.json
 
 Weather-enhanced experiments use the same state-aware GBM script after pointing
 `paths.processed_features` at the weather-augmented feature CSV.
+Lagged weather forecast-error features can be added on top of that table:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/08_add_weather_error_history.py \
+  --config config/gpu.yaml \
+  --input-features outputs/weather_experiment/features_weather.csv \
+  --output-features outputs/weather_error_experiment/features_weather_error.csv \
+  --forecast-lead-day 1 \
+  --windows-days 1 3 7
+```
 
 The quantile features are leakage-safe proxies because the current raw dataset
 contains fundamental point forecasts but not the realized load/renewable series
@@ -146,26 +156,28 @@ the literature.
 ## Current Accuracy Ceiling
 
 On the December 2025 test split, the strongest verified internal-data model so
-far is the weather-augmented state-aware GBM without proxy quantile features:
+far is the state-aware GBM with Open-Meteo forecast features plus lagged
+weather forecast-error history, trained from 2024-04-01:
 
 ```text
-accuracy: 0.7498
-MAE: 78.24
-RMSE: 159.36
-cap_normalized_accuracy: 0.9218
+accuracy: 0.7692
+MAE: 82.33
+RMSE: 166.32
+cap_normalized_accuracy: 0.9177
 ```
 
-Without weather, the same state-aware GBM reached `accuracy=0.7444`. The
-weather experiment used Open-Meteo `previous_day1/2/3` forecast-run features
-for Shaanxi representative cities and improved the high/cap-state classifier
-slightly, but not enough to close the 85% gap.
+Without weather, the same state-aware GBM reached `accuracy=0.7444`. Weather
+forecast-run features reached `accuracy=0.7498`, and extending the training
+window to start at 2024-04-01 reached `accuracy=0.7654`. Adding lagged weather
+forecast-error history lifted the verified result to `accuracy=0.7692`, mainly
+by raising predictions in the 150+ price regions. It still does not close the
+85% gap.
 
 The main remaining bottleneck is the high-price boundary. A diagnostic oracle
 showed that perfect floor-state correction would lift accuracy to about 0.82,
 while perfect floor plus perfect 900+ cap-state correction would be needed to
 reach about 0.85. With the current dataset, the cap-state classifier remains
 weak because the raw data contains fundamental forecasts but not realized
-fundamental observations or weather forecast errors. To credibly target 85%,
-the next data priority is to add realized load/renewable/generation series or
-weather forecasts so cap-price scarcity states can be identified before the
-delivery day.
+fundamental observations. The next data priority is to add realized
+load/renewable/generation series, or an official market scarcity signal, so
+cap-price scarcity states can be identified before the delivery day.
