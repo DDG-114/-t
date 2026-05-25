@@ -45,10 +45,19 @@ low-price slots. It is not adopted as the default path.
 
 ## Negative / Ablation Results
 
+- 2025-priority scarcity rule postprocessing:
+  - Validation-selected rule used high net load and low renewable forecast to
+    lift suspected scarcity slots.
+  - Test accuracy improved only from `0.7605732816532624` to about `0.7639`.
+  - Result: useful diagnostic, but still lower than the current best.
 - Scarcity rolling-state features:
   - Config: `config/residual_calibrator_scarcity_q2.yaml`
   - Residual-calibrated test accuracy: `0.7472349106265357`
   - Result: lower than the current best.
+- Four-state floor/normal/high/cap mixture-of-experts diagnostic:
+  - Used 2025-priority training and a multiclass regime classifier.
+  - Validation-selected test accuracy was about `0.7335`.
+  - Result: high/cap December slots were still mostly classified as normal.
 - November-only validation after training through 2025-10:
   - Config: `config/residual_calibrator_weather_error_novvalid.yaml`
   - Residual-calibrated test accuracy: `0.6770950754961472`
