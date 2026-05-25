@@ -115,6 +115,27 @@ requires a stronger high-price magnitude signal such as actual/forecast reserve
 margin, outage/maintenance, available capacity, real-time load/renewable error,
 or official scarcity/market disclosure features.
 
+## High-Price Magnitude Expert Diagnostic
+
+Following the spike-regime literature, a separate high-price magnitude expert
+was tested on top of the GBM-residual anchor. The expert used leakage-safe
+fundamental forecasts, price history, anchor predictions, and state
+probabilities, with training masks based on high/cap probability or elevated
+anchor price. Ridge/Huber variants were tested for raw price, residual, and
+log-price targets, with the blend/gate chosen on the 2025-10/11 validation
+period.
+
+Best validation-selected variants transferred poorly to 2025-12: the strongest
+simple magnitude experts reached only about `0.7711` test accuracy, below the
+online residual best `0.7857284442214671`. Slower tree-based expert grids were
+also attempted but were not worth adopting because the lightweight diagnostic
+already showed poor validation-to-test transfer and the earlier oracle analysis
+put fixed-score lifting below `0.789`.
+
+Result: a separate high-price magnitude model using the current local feature
+table is still not enough. The next useful route is to add new no-leakage
+scarcity signals rather than continuing to tune models on the same inputs.
+
 ## 2025-Priority Experiment
 
 - Config: `config/residual_calibrator_2025_priority.yaml`
