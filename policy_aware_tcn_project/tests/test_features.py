@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from epf_tcn.features import (
+    add_external_signal_features,
     add_china_calendar_features,
     add_exogenous_quantile_features,
     add_floor_price_features,
@@ -138,3 +139,59 @@ def test_previous_day_curve_features_use_only_previous_day_prices():
     assert row["prevday_price_offset_+1"] == pytest.approx(500.0)
     assert row["prevday_curve_max"] == pytest.approx(1000.0)
     assert row["prevday_curve_floor_ratio"] == pytest.approx(0.25)
+
+
+def test_external_signal_features_keep_actuals_lagged_only(tmp_path):
+    rows = []
+    external_rows = []
+    for day in range(4):
+        for slot in range(2):
+            timestamp = pd.Timestamp("2025-01-01") + pd.Timedelta(
+                days=day,
+                minutes=15 * slot,
+            )
+            rows.append(
+                {
+                    "Date": timestamp,
+                    "date": timestamp.floor("D"),
+                    "slot": slot,
+                    "Price": 40.0,
+                }
+            )
+            external_rows.append(
+                {
+                    "Date": timestamp,
+                    "reserve_margin_forecast": 10.0 + day + slot,
+                    "actual_load": 100.0 + day * 10 + slot,
+                }
+            )
+
+    external_path = tmp_path / "scarcity_signals.csv"
+    pd.DataFrame(external_rows).to_csv(external_path, index=False)
+    df = pd.DataFrame(rows)
+    cfg = {
+        "data": {"slot_minutes": 15},
+        "features": {
+            "external_signals": {
+                "enabled": True,
+                "path": str(external_path),
+                "datetime_col": "Date",
+                "direct_columns": ["reserve_margin_forecast"],
+                "lagged_actual_columns": ["actual_load"],
+                "actual_lags_days": [1, 2],
+                "rolling_windows_days": [2],
+                "prefix": "scarcity_",
+            }
+        },
+    }
+
+    features = add_external_signal_features(df, cfg)
+    row = features[
+        (features["date"] == pd.Timestamp("2025-01-04")) & (features["slot"] == 1)
+    ].iloc[0]
+
+    assert row["scarcity_reserve_margin_forecast"] == pytest.approx(14.0)
+    assert row["scarcity_actual_load_lag_1d"] == pytest.approx(121.0)
+    assert row["scarcity_actual_load_lag_2d"] == pytest.approx(111.0)
+    assert row["scarcity_actual_load_roll_2d_mean"] == pytest.approx(116.0)
+    assert "scarcity_actual_load" not in features.columns

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List
 
 import numpy as np
@@ -304,6 +305,142 @@ def add_derived_quantile_features(
     return result
 
 
+def _load_external_signal_frame(config: Dict[str, Any]) -> pd.DataFrame:
+    signal_path = Path(config["path"])
+    if not signal_path.exists():
+        raise FileNotFoundError(f"External signal file not found: {signal_path}")
+    return pd.read_csv(signal_path, encoding=config.get("encoding", "utf-8-sig"))
+
+
+def _prepare_external_signal_index(
+    signals: pd.DataFrame,
+    config: Dict[str, Any],
+    slot_minutes: int,
+) -> pd.DataFrame:
+    result = signals.copy()
+    datetime_col = config.get("datetime_col")
+    date_col = config.get("date_col")
+    slot_col = config.get("slot_col")
+
+    if datetime_col and datetime_col in result.columns:
+        timestamp = pd.to_datetime(result[datetime_col])
+        result["date"] = timestamp.dt.normalize()
+        result["slot"] = ((timestamp.dt.hour * 60 + timestamp.dt.minute) // slot_minutes).astype(
+            int
+        )
+    elif date_col and slot_col and date_col in result.columns and slot_col in result.columns:
+        result["date"] = pd.to_datetime(result[date_col]).dt.normalize()
+        result["slot"] = pd.to_numeric(result[slot_col], errors="coerce").astype("Int64")
+        if result["slot"].isna().any():
+            raise ValueError(f"External signal slot column contains non-numeric values: {slot_col}")
+        result["slot"] = result["slot"].astype(int)
+    else:
+        raise ValueError(
+            "external_signals requires either datetime_col or both date_col and slot_col"
+        )
+
+    result = result.drop_duplicates(["date", "slot"], keep="last")
+    return result.sort_values(["date", "slot"]).reset_index(drop=True)
+
+
+def add_external_signal_features(
+    df: pd.DataFrame,
+    config: Dict[str, Any],
+) -> pd.DataFrame:
+    """Merge optional scarcity/fundamental signals with leakage-safe actuals.
+
+    ``direct_columns`` are assumed to be known before the forecast target time,
+    such as day-ahead reserve-margin forecasts or official market disclosures.
+    ``lagged_actual_columns`` are assumed to be realized after delivery, so the
+    current timestamp value is never exposed. Only same-slot historical lags and
+    rolling statistics shifted by one day are merged.
+    """
+    signal_cfg = config.get("features", {}).get("external_signals", {})
+    if not signal_cfg or not bool(signal_cfg.get("enabled", False)):
+        return df
+
+    slot_minutes = int(config.get("data", {}).get("slot_minutes", 15))
+    prefix = str(signal_cfg.get("prefix", "external_"))
+    add_missing = bool(signal_cfg.get("add_missing_indicators", True))
+    actual_lags = [int(day) for day in signal_cfg.get("actual_lags_days", [1])]
+    rolling_windows = [int(day) for day in signal_cfg.get("rolling_windows_days", [3, 7])]
+
+    signals = _prepare_external_signal_index(
+        _load_external_signal_frame(signal_cfg),
+        signal_cfg,
+        slot_minutes=slot_minutes,
+    )
+    result = df.copy()
+
+    direct_cols = [
+        col
+        for col in signal_cfg.get("direct_columns", [])
+        if col in signals.columns
+    ]
+    if direct_cols:
+        direct = signals[["date", "slot", *direct_cols]].copy()
+        rename = {col: f"{prefix}{col}" for col in direct_cols}
+        direct = direct.rename(columns=rename)
+        for col in rename.values():
+            direct[col] = pd.to_numeric(direct[col], errors="coerce")
+            if add_missing:
+                direct[f"{col}_is_missing"] = direct[col].isna().astype(float)
+        result = result.merge(direct, on=["date", "slot"], how="left")
+
+    actual_cols = [
+        col
+        for col in signal_cfg.get("lagged_actual_columns", [])
+        if col in signals.columns
+    ]
+    if actual_cols:
+        actual = signals[["date", "slot", *actual_cols]].copy()
+        for col in actual_cols:
+            actual[col] = pd.to_numeric(actual[col], errors="coerce")
+        actual = actual.sort_values(["slot", "date"]).reset_index(drop=True)
+
+        feature_parts = [actual[["date", "slot"]].copy()]
+        for col in actual_cols:
+            group = actual.groupby("slot", group_keys=False)[col]
+            base_name = f"{prefix}{col}"
+            for lag in actual_lags:
+                feature_parts.append(
+                    group.shift(lag).rename(f"{base_name}_lag_{lag}d").to_frame()
+                )
+
+            shifted = group.shift(1)
+            for window in rolling_windows:
+                rolled = shifted.groupby(actual["slot"], group_keys=False).rolling(window)
+                feature_parts.append(
+                    rolled.mean().reset_index(level=0, drop=True).rename(
+                        f"{base_name}_roll_{window}d_mean"
+                    ).to_frame()
+                )
+                feature_parts.append(
+                    rolled.std().reset_index(level=0, drop=True).rename(
+                        f"{base_name}_roll_{window}d_std"
+                    ).to_frame()
+                )
+                feature_parts.append(
+                    rolled.min().reset_index(level=0, drop=True).rename(
+                        f"{base_name}_roll_{window}d_min"
+                    ).to_frame()
+                )
+                feature_parts.append(
+                    rolled.max().reset_index(level=0, drop=True).rename(
+                        f"{base_name}_roll_{window}d_max"
+                    ).to_frame()
+                )
+
+        actual_features = pd.concat(feature_parts, axis=1)
+        if add_missing:
+            value_cols = [col for col in actual_features.columns if col not in {"date", "slot"}]
+            for col in value_cols:
+                actual_features[f"{col}_is_missing"] = actual_features[col].isna().astype(float)
+        result = result.merge(actual_features, on=["date", "slot"], how="left")
+
+    return result.sort_values(["date", "slot"]).reset_index(drop=True)
+
+
 def add_floor_price_features(
     df: pd.DataFrame,
     target_col: str,
@@ -370,6 +507,8 @@ def build_features(df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
     expected_slots = config["data"].get("expected_slots_per_day", 96)
 
     result = add_time_index_columns(df, config)
+
+    result = add_external_signal_features(result, config)
 
     if config["features"].get("include_market_features", True):
         result = add_market_features(result)

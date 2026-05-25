@@ -1,0 +1,85 @@
+paths:
+  raw_data: data/raw/GS.csv
+  processed_features: outputs/external_scarcity/features_external_scarcity.csv
+  model_dir: outputs/external_scarcity/models
+  prediction_dir: outputs/external_scarcity/predictions
+  report_dir: outputs/external_scarcity/reports
+
+columns:
+  datetime: Date
+  target: Price
+  exogenous:
+    - 发电总出力预测
+    - 竞价空间
+    - 统一负荷预测
+    - 抽蓄
+    - 统一新能源预测
+    - 联络线计划
+
+data:
+  encoding: utf-8-sig
+  expected_slots_per_day: 96
+  slot_minutes: 15
+  target_cleaning:
+    enabled: true
+    cap_values_as_missing:
+      - 0.0
+    constant_run_exempt_values:
+      - 40.0
+      - 1000.0
+    constant_run_min_length: 672
+
+features:
+  include_market_features: true
+  include_floor_features: true
+  floor_price: 40.0
+  price_lags_days: [1, 2, 7, 14]
+  rolling_windows_days: [3, 7, 14]
+  include_exogenous_quantile_features: true
+  exogenous_quantile_source_columns:
+    - 发电总出力预测
+    - 竞价空间
+    - 统一负荷预测
+    - 抽蓄
+    - 统一新能源预测
+    - 联络线计划
+  exogenous_quantile_windows_days: [7, 14, 28]
+  exogenous_quantile_levels: [0.1, 0.5, 0.9]
+  include_exogenous_quantile_spreads: true
+  include_derived_quantile_features: true
+  include_calendar_features: true
+  include_cyclic_slot_features: true
+  external_signals:
+    enabled: true
+    path: data/external/scarcity_signals.csv
+    datetime_col: Date
+    prefix: scarcity_
+    direct_columns:
+      - reserve_margin_forecast
+      - available_capacity_forecast
+      - load_forecast_external
+      - renewable_forecast_external
+      - outage_capacity_declared
+      - market_scarcity_index
+    lagged_actual_columns:
+      - actual_load
+      - actual_renewable
+      - actual_generation
+      - actual_tie_line
+      - realized_reserve_margin
+    actual_lags_days: [1, 2, 7]
+    rolling_windows_days: [3, 7, 14]
+    add_missing_indicators: true
+
+metrics:
+  price_floor: 40.0
+  price_range: 1000.0
+  daily_accuracy_threshold: 0.85
+
+split:
+  train_start: "2024-04-01"
+  train_end: "2025-09-30"
+  valid_start: "2025-10-01"
+  valid_end: "2025-11-30"
+  test_start: "2025-12-01"
+  test_end: "2025-12-31"
