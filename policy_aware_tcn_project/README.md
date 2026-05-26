@@ -299,3 +299,9 @@ weak because the raw data contains fundamental forecasts but not realized
 fundamental observations. The next data priority is to add realized
 load/renewable/generation series, or an official market scarcity signal, so
 cap-price scarcity states can be identified before the delivery day.
+
+The concrete 85% improvement route is documented in
+`docs/model_improvement_plan_85pct.md`. It keeps the current online residual
+anchor, adds external scarcity and probabilistic-fundamental features, then
+trains a scarcity-regime residual ensemble with explicit acceptance gates for
+the fixed 2025-12 test month.
