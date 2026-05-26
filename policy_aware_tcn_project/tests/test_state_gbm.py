@@ -1,7 +1,13 @@
+import numpy as np
 import pytest
 import pandas as pd
 
-from epf_tcn.state_gbm import add_scarcity_state_features, add_state_gbm_features
+from epf_tcn.state_gbm import (
+    StateThresholds,
+    _apply_state_overrides,
+    add_scarcity_state_features,
+    add_state_gbm_features,
+)
 
 
 def test_state_gbm_boundary_features_use_previous_same_slot_only():
@@ -82,3 +88,27 @@ def test_scarcity_state_features_use_previous_same_slot_forecasts_only():
     assert row["统一负荷预测_scarcity_q90_3d"] == pytest.approx(136.0)
     assert row["统一负荷预测_scarcity_delta_q90_3d"] == pytest.approx(864.0)
     assert row["统一负荷预测_scarcity_above_q90_3d"] == 1.0
+
+
+def test_state_overrides_can_use_zero_floor_policy():
+    pred = _apply_state_overrides(
+        np.array([-20.0, 20.0, 950.0]),
+        {
+            "floor": np.array([0.0, 0.9, 0.0]),
+            "cap": np.array([0.0, 0.0, 0.9]),
+            "high": np.array([0.0, 0.0, 0.0]),
+        },
+        StateThresholds(
+            floor_threshold=0.8,
+            floor_prediction_ceiling=100.0,
+            cap_threshold=0.8,
+            high_threshold=None,
+            high_lift_value=600.0,
+        ),
+        floor_price=40.0,
+        prediction_min=0.0,
+        prediction_max=1000.0,
+        floor_override_value=0.0,
+    )
+
+    assert pred.tolist() == [0.0, 0.0, 1000.0]

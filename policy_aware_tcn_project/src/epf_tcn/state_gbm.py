@@ -361,6 +361,25 @@ def _regression_weights(y: np.ndarray, config: Dict[str, Any]) -> np.ndarray:
     return weights if mean <= 0 else weights / mean
 
 
+def _prediction_min(config: Dict[str, Any]) -> float:
+    return float(
+        config.get("model", {}).get(
+            "clip_prediction_min",
+            config.get("metrics", {}).get("price_floor", 40.0),
+        )
+    )
+
+
+def _prediction_max(config: Dict[str, Any]) -> float:
+    return float(config.get("model", {}).get("clip_prediction_max", 1000.0))
+
+
+def _floor_override_value(config: Dict[str, Any]) -> float:
+    return float(
+        config.get("state_gbm", {}).get("floor_override_value", _prediction_min(config))
+    )
+
+
 def _regressor(config: Dict[str, Any], n_estimators: int | None = None) -> Any:
     cfg = config.get("state_gbm", {}).get("regressor", {})
     return lgb.LGBMRegressor(
@@ -448,15 +467,20 @@ def _apply_state_overrides(
     probabilities: Mapping[str, np.ndarray],
     thresholds: StateThresholds,
     floor_price: float,
+    prediction_min: float | None = None,
+    prediction_max: float = 1000.0,
+    floor_override_value: float | None = None,
 ) -> np.ndarray:
     pred = np.asarray(base_pred, dtype=float).copy()
+    lower = float(floor_price if prediction_min is None else prediction_min)
+    floor_value = float(floor_price if floor_override_value is None else floor_override_value)
     floor_mask = probabilities["floor"] >= thresholds.floor_threshold
     if thresholds.floor_prediction_ceiling is not None:
         floor_mask &= pred <= thresholds.floor_prediction_ceiling
-    pred[floor_mask] = floor_price
+    pred[floor_mask] = floor_value
 
     cap_mask = probabilities["cap"] >= thresholds.cap_threshold
-    pred[cap_mask] = 1000.0
+    pred[cap_mask] = float(prediction_max)
 
     if thresholds.high_threshold is not None:
         high_mask = (
@@ -467,7 +491,7 @@ def _apply_state_overrides(
         )
         pred[high_mask] = thresholds.high_lift_value
 
-    return np.clip(pred, floor_price, 1000.0)
+    return np.clip(pred, lower, float(prediction_max))
 
 
 def _prediction_frame(
@@ -549,6 +573,9 @@ def _select_thresholds(
                             probabilities,
                             thresholds,
                             floor_price=floor_price,
+                            prediction_min=_prediction_min(config),
+                            prediction_max=_prediction_max(config),
+                            floor_override_value=_floor_override_value(config),
                         )
                         summary = regression_summary(y_valid, pred, floor_price)
                         candidate = {**thresholds.to_dict(), **summary}
@@ -622,7 +649,7 @@ def train_state_gbm(features: pd.DataFrame, config: Dict[str, Any]) -> StateGBMM
             )
         ],
     )
-    base_valid = np.clip(reg.predict(x_valid), 40.0, 1000.0)
+    base_valid = np.clip(reg.predict(x_valid), _prediction_min(config), _prediction_max(config))
 
     labels_train = _state_labels(y_train)
     labels_valid = _state_labels(y_valid)
@@ -679,6 +706,9 @@ def train_state_gbm(features: pd.DataFrame, config: Dict[str, Any]) -> StateGBMM
         valid_probs,
         thresholds,
         floor_price=float(config.get("metrics", {}).get("price_floor", 40.0)),
+        prediction_min=_prediction_min(config),
+        prediction_max=_prediction_max(config),
+        floor_override_value=_floor_override_value(config),
     )
     report = {
         "model_type": "state_aware_lightgbm",
@@ -725,13 +755,16 @@ def predict_state_gbm(
     mask = enhanced[target].notna()
     frame = enhanced.loc[mask].copy()
     x = _matrix(frame, model.feature_cols, model.feature_medians)
-    base_pred = np.clip(model.regressor.predict(x), 40.0, 1000.0)
+    base_pred = np.clip(model.regressor.predict(x), _prediction_min(config), _prediction_max(config))
     probabilities = _predict_state_probabilities(model, x)
     y_pred = _apply_state_overrides(
         base_pred,
         probabilities,
         model.thresholds,
         floor_price=float(config.get("metrics", {}).get("price_floor", 40.0)),
+        prediction_min=_prediction_min(config),
+        prediction_max=_prediction_max(config),
+        floor_override_value=_floor_override_value(config),
     )
     return _prediction_frame(frame, y_pred, base_pred, probabilities, config)
 
@@ -746,13 +779,16 @@ def evaluate_state_gbm(
     enhanced = add_state_gbm_features(features, config)
     frame = _split_frame(enhanced, config, split_name)
     x = _matrix(frame, model.feature_cols, model.feature_medians)
-    base_pred = np.clip(model.regressor.predict(x), 40.0, 1000.0)
+    base_pred = np.clip(model.regressor.predict(x), _prediction_min(config), _prediction_max(config))
     probabilities = _predict_state_probabilities(model, x)
     y_pred = _apply_state_overrides(
         base_pred,
         probabilities,
         model.thresholds,
         floor_price=float(config.get("metrics", {}).get("price_floor", 40.0)),
+        prediction_min=_prediction_min(config),
+        prediction_max=_prediction_max(config),
+        floor_override_value=_floor_override_value(config),
     )
     predictions = _prediction_frame(frame, y_pred, base_pred, probabilities, config)
     evaluation = evaluate_predictions(predictions, config)

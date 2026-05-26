@@ -86,3 +86,38 @@ def test_spike_online_residual_can_override_high_probability_slots():
 
     day_four = corrected[corrected["date"] == pd.Timestamp("2025-12-04")]
     assert day_four["y_pred"].tolist() == pytest.approx([150.0, 700.0])
+
+
+def test_online_residual_supports_zero_floor_policy():
+    rows = []
+    for day in range(3):
+        rows.append(
+            {
+                "Date": pd.Timestamp("2026-01-01") + pd.Timedelta(days=day),
+                "date": pd.Timestamp("2026-01-01") + pd.Timedelta(days=day),
+                "slot": 0,
+                "y_true": 0.0,
+                "y_pred": 20.0,
+                "floor_probability": 0.0,
+                "high_probability": 0.0,
+                "cap_probability": 0.0,
+            }
+        )
+    predictions = pd.DataFrame(rows)
+
+    corrected = apply_online_residual_correction(
+        predictions,
+        OnlineResidualConfig(
+            min_history_days=2,
+            window_days=2,
+            group="global",
+            shrink=1.0,
+            clip_value=100.0,
+            min_prediction=0.0,
+            max_floor_probability=0.8,
+            prediction_floor=0.0,
+        ),
+    )
+
+    day_three = corrected[corrected["date"] == pd.Timestamp("2026-01-03")]
+    assert day_three["y_pred"].tolist() == pytest.approx([0.0])

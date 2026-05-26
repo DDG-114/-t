@@ -34,6 +34,32 @@ def test_residual_correction_respects_floor_probability_mask():
     assert pred.tolist() == [40.0, 250.0, 300.0]
 
 
+def test_residual_correction_supports_zero_floor_policy():
+    frame = pd.DataFrame(
+        {
+            "state_pred": [10.0],
+            "floor_probability": [0.0],
+        }
+    )
+    params = ResidualCalibrationParams(
+        shrink=1.0,
+        clip_value=100.0,
+        min_prediction=0.0,
+        max_floor_probability=0.8,
+        positive_only=False,
+    )
+
+    pred = _apply_residual_correction(
+        frame,
+        np.array([-50.0]),
+        params,
+        floor_price=40.0,
+        prediction_min=0.0,
+    )
+
+    assert pred.tolist() == [0.0]
+
+
 def test_select_params_can_disable_unhelpful_correction():
     frame = pd.DataFrame(
         {

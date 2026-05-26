@@ -17,7 +17,10 @@ from epf_tcn.state_gbm import (
     StateGBMModel,
     _apply_state_overrides,
     _date_range_days,
+    _floor_override_value,
     _matrix,
+    _prediction_max,
+    _prediction_min,
     _predict_state_probabilities,
     _split_frame,
     add_state_gbm_features,
@@ -97,13 +100,20 @@ def _prediction_feature_frame(
     config: Dict[str, Any],
 ) -> pd.DataFrame:
     x = _matrix(frame, state_model.feature_cols, state_model.feature_medians)
-    base_pred = np.clip(state_model.regressor.predict(x), 40.0, 1000.0)
+    base_pred = np.clip(
+        state_model.regressor.predict(x),
+        _prediction_min(config),
+        _prediction_max(config),
+    )
     probabilities = _predict_state_probabilities(state_model, x)
     state_pred = _apply_state_overrides(
         base_pred,
         probabilities,
         state_model.thresholds,
         floor_price=float(config.get("metrics", {}).get("price_floor", 40.0)),
+        prediction_min=_prediction_min(config),
+        prediction_max=_prediction_max(config),
+        floor_override_value=_floor_override_value(config),
     )
     result = frame.copy()
     result["base_pred"] = base_pred
@@ -216,6 +226,8 @@ def _apply_residual_correction(
     residual_pred: np.ndarray,
     params: ResidualCalibrationParams,
     floor_price: float,
+    prediction_min: float | None = None,
+    prediction_max: float = 1000.0,
 ) -> np.ndarray:
     state_pred = frame["state_pred"].to_numpy(dtype=float)
     correction = np.clip(
@@ -232,7 +244,8 @@ def _apply_residual_correction(
     )
     pred = state_pred.copy()
     pred[mask] = pred[mask] + correction[mask]
-    return np.clip(pred, floor_price, 1000.0)
+    lower = float(floor_price if prediction_min is None else prediction_min)
+    return np.clip(pred, lower, float(prediction_max))
 
 
 def _select_params(
@@ -268,6 +281,8 @@ def _select_params(
                             residual_pred,
                             params,
                             price_floor,
+                            prediction_min=_prediction_min(config),
+                            prediction_max=_prediction_max(config),
                         )
                         summary = regression_summary(valid_frame[target], pred, price_floor)
                         row = {**params.to_dict(), **summary}
@@ -392,6 +407,8 @@ def predict_residual_calibrated(
         residual_pred,
         calibrator.params,
         float(config.get("metrics", {}).get("price_floor", 40.0)),
+        prediction_min=_prediction_min(config),
+        prediction_max=_prediction_max(config),
     )
     target = config["columns"]["target"]
     return pd.DataFrame(

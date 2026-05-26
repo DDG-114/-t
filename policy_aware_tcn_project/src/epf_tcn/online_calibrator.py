@@ -24,6 +24,8 @@ class OnlineResidualConfig:
     clip_value: float = 160.0
     min_prediction: float = 60.0
     max_floor_probability: float = 0.8
+    prediction_floor: float = 40.0
+    prediction_cap: float = 1000.0
     prediction_bins: tuple[float, ...] = (40, 60, 100, 160, 240, 360, 500, 1000)
     spike_enabled: bool = False
     spike_group: str = "state"
@@ -47,6 +49,8 @@ class OnlineResidualConfig:
             clip_value=float(cfg.get("clip_value", 160.0)),
             min_prediction=float(cfg.get("min_prediction", 60.0)),
             max_floor_probability=float(cfg.get("max_floor_probability", 0.8)),
+            prediction_floor=float(cfg.get("prediction_floor", 40.0)),
+            prediction_cap=float(cfg.get("prediction_cap", 1000.0)),
             prediction_bins=tuple(float(value) for value in cfg.get(
                 "prediction_bins",
                 [40, 60, 100, 160, 240, 360, 500, 1000],
@@ -79,6 +83,8 @@ class OnlineResidualConfig:
             "clip_value": self.clip_value,
             "min_prediction": self.min_prediction,
             "max_floor_probability": self.max_floor_probability,
+            "prediction_floor": self.prediction_floor,
+            "prediction_cap": self.prediction_cap,
             "prediction_bins": list(self.prediction_bins),
             "spike_enabled": self.spike_enabled,
             "spike_group": self.spike_group,
@@ -194,8 +200,8 @@ def apply_online_residual_correction(
         day_indices = np.flatnonzero(day_mask)
         corrected[day_indices[eligible]] = np.clip(
             corrected[day_indices[eligible]] + correction[eligible],
-            40.0,
-            1000.0,
+            config.prediction_floor,
+            config.prediction_cap,
         )
 
     result["y_pred_base"] = base_pred

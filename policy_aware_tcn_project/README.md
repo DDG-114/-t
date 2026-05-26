@@ -305,3 +305,15 @@ The concrete 85% improvement route is documented in
 anchor, adds external scarcity and probabilistic-fundamental features, then
 trains a scarcity-regime residual ensemble with explicit acceptance gates for
 the fixed 2025-12 test month.
+
+The existing methods can also be evaluated on labeled 2026 data with:
+
+```bash
+../dayahead_epf_agent_project/.venv/bin/python scripts/20_evaluate_2026_methods.py \
+  --start 2026-01-01 \
+  --end 2026-04-27
+```
+
+See `docs/2026_method_evaluation.md` for the current 2026 results. The best
+2026 external-test score so far is `mean_daily_accuracy=0.4778`, mainly limited
+by the new legal zero-price regime.
